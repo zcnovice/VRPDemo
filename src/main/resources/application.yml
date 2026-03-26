@@ -1,0 +1,71 @@
+# ==================== 服务器配置 ====================
+server:
+  port: 8080
+
+# ==================== Spring配置 ====================
+spring:
+  application:
+    name: vrp-demo
+
+  # 数据源配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/vrp_car?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: root  # 请修改为实际密码
+    # Druid连接池配置
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 60000
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+
+  # Jackson JSON配置
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+
+# ==================== MyBatis-Plus配置 ====================
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# ==================== VRP算法配置 ====================
+vrp:
+  algorithm:
+    # 退火参数
+    initial-temperature: 10000.0      # 初始温度
+    final-temperature: 0.001          # 终止温度
+    cooling-rate: 0.9999              # 降温系数（越接近1迭代越多）
+    
+    # 权重参数
+    weight-distance: 0.35             # 总里程权重
+    weight-cluster: 0.10              # 聚类权重
+    weight-balance: 0.55              # 均衡权重
+    
+    # 扇形区域参数
+    overlap-ratio: 0.3                # 区域重叠比例（30%）
+
+# ==================== 日志配置 ====================
+logging:
+  level:
+    root: INFO
+    com.example.vrpdemo: DEBUG
+    com.baomidou.mybatisplus: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

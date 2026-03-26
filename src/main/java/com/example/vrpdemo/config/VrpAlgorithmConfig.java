@@ -1,0 +1,73 @@
+package com.example.vrpdemo.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * VRP算法配置类
+ * 配置模拟退火算法的各项参数
+ */
+@Data
+@Configuration
+@ConfigurationProperties(prefix = "vrp.algorithm")
+public class VrpAlgorithmConfig {
+
+    // ==================== 退火参数 ====================
+
+    /** 初始温度（越高接受差解的概率越大，探索性越强） */
+    private double initialTemperature = 10000.0;
+
+    /** 终止温度（算法停止的温度阈值） */
+    private double finalTemperature = 0.001;
+
+    /** 
+     * 降温系数（0-1之间）
+     * 值越接近1，降温越慢，迭代次数越多，解质量可能更好但耗时更长
+     * 推荐值：0.9999
+     */
+    private double coolingRate = 0.9999;
+
+    // ==================== 权重参数 ====================
+
+    /** 
+     * 总里程权重
+     * 目标：最小化总行驶距离
+     * 推荐值：0.35
+     */
+    private double weightDistance = 0.35;
+
+    /** 
+     * 区域聚类权重
+     * 目标：使每辆车的配送区域更集中
+     * 推荐值：0.10
+     */
+    private double weightCluster = 0.10;
+
+    /** 
+     * 负载均衡权重
+     * 目标：使各车辆的里程更加均衡
+     * 推荐值：0.55
+     */
+    private double weightBalance = 0.55;
+
+    // ==================== 扇形区域参数 ====================
+
+    /** 
+     * 扇形区域重叠比例
+     * 允许相邻车辆的服务区域有一定重叠，增加灵活性
+     * 推荐值：0.3（30%重叠）
+     */
+    private double overlapRatio = 0.4;
+
+    // ==================== 参考值（用于归一化） ====================
+
+    /** 总里程参考值 */
+    private double refTotalDistance = 4600.0;
+
+    /** 聚类评分参考值 */
+    private double refCluster = 15.0;
+
+    /** 均衡评分参考值 */
+    private double refBalance = 150.0;
+}
