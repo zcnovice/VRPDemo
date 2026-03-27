@@ -20,13 +20,13 @@ public class NodeVO {
     /** 节点编码 */
     private String nodeCode;
 
-    /** 节点名称 */
+    /** 节点名称（用于匹配道路距离表中的乡镇名称） */
     private String name;
 
-    /** X坐标 */
+    /** X坐标（经度） */
     private double x;
 
-    /** Y坐标 */
+    /** Y坐标（纬度） */
     private double y;
 
     /** 需求量 */
@@ -38,17 +38,90 @@ public class NodeVO {
      */
     private double angle;
 
+    /** 距离服务（静态引用，由Spring容器初始化时注入） */
+    private static DistanceProvider distanceProvider;
+
     /**
-     * 计算到另一个节点的欧几里得距离
-     * 使用勾股定理计算直线距离
+     * 距离提供者接口
+     * 用于解耦NodeVO和Spring服务
+     */
+    /* 只是定义接口，不依赖于任何Spring服务  比如我会引入外部的方法要使用到Spring注解@Autowired
+     * 这就让我无法在NodeVO中使用@Autowired注解，因为NodeVO是静态的，无法使用@Autowired注解，所以
+     * 只是提供接口 */
+    public interface DistanceProvider {
+        /**
+         * 获取两点之间的道路距离
+         * @param nodeName1 节点1名称
+         * @param nodeName2 节点2名称
+         * @return 距离（公里），不可达返回Double.MAX_VALUE
+         */
+        double getDistance(String nodeName1, String nodeName2);
+
+        /**
+         * 检查两点之间是否可达
+         */
+        boolean isReachable(String nodeName1, String nodeName2);
+    }
+
+    /**
+     * 设置距离提供者（由Spring容器调用）
+     */
+    public static void setDistanceProvider(DistanceProvider provider) {
+        distanceProvider = provider;
+    }
+
+    /** 上一次距离计算的警告信息 */
+    private static String lastDistanceWarning = null;
+
+    /**
+     * 获取上一次距离计算的警告信息
+     */
+    public static String getLastDistanceWarning() {
+        return lastDistanceWarning;
+    }
+
+    /**
+     * 清除警告信息
+     */
+    public static void clearDistanceWarning() {
+        lastDistanceWarning = null;
+    }
+
+    /**
+     * 计算到另一个节点的距离
+     * 优先使用道路距离表中的实际距离，如果不可达则返回极大值
      * 
      * @param other 目标节点
-     * @return 两点之间的直线距离
+     * @return 两点之间的道路距离（公里），不可达返回999999.0
      */
     public double distanceTo(NodeVO other) {
+        // 如果有距离提供者，使用实际道路距离
+        if (distanceProvider != null && this.name != null && other.name != null) {
+            double distance = distanceProvider.getDistance(this.name, other.name);
+            if (distance == Double.MAX_VALUE) {
+                lastDistanceWarning = "节点[" + this.name + "]与节点[" + other.name + "]之间没有道路连接";
+                return 999999.0; // 返回一个大数值，而不是无穷大
+            }
+            return distance;
+        }
+        
+        // 降级为欧几里得距离（用于兼容旧数据或测试）
         double dx = this.x - other.x;
         double dy = this.y - other.y;
         return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /**
+     * 检查到另一个节点是否可达
+     * 
+     * @param other 目标节点
+     * @return true-可达，false-不可达
+     */
+    public boolean isReachableTo(NodeVO other) {
+        if (distanceProvider != null && this.name != null && other.name != null) {
+            return distanceProvider.isReachable(this.name, other.name);
+        }
+        return true; // 无距离提供者时默认可达
     }
 
     /**

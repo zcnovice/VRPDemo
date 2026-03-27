@@ -21,7 +21,7 @@ public class VrpDemoApplication {
         SpringApplication.run(VrpDemoApplication.class, args);
         System.out.println("========================================");
         System.out.println("  VRP Demo 服务启动成功！");
-        System.out.println("  API文档: http://localhost:8080/api/vrp");
+        System.out.println("  API文档: http://localhost:7070/api/vrp");
         System.out.println("========================================");
     }
 }

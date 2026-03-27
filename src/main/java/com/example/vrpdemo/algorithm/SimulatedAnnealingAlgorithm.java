@@ -73,7 +73,7 @@ public class SimulatedAnnealingAlgorithm {
 
         /* 初始解赋值给最优解 */
         SolutionVO bestSolution = currentSolution;
-        log.info("初始解得分: {:.4f}", bestSolution.getScore());
+        log.info("初始解得分: {}", String.format("%.4f", bestSolution.getScore()));
 
         // 2. 模拟退火主循环
         double temperature = config.getInitialTemperature();
@@ -109,8 +109,11 @@ public class SimulatedAnnealingAlgorithm {
 
             // 日志输出
             if (iteration % 1000 == 0) {
-                log.info("迭代: {}, 温度: {:.4f}, 当前得分: {:.4f}, 最优得分: {:.4f}",
-                        iteration, temperature, currentSolution.getScore(), bestSolution.getScore());
+                log.info("迭代: {}, 温度: {}, 当前得分: {}, 最优得分: {}",
+                        iteration,
+                        String.format("%.4f", temperature),
+                        String.format("%.4f", currentSolution.getScore()),
+                        String.format("%.4f", bestSolution.getScore()));
             }
         }
 
@@ -118,9 +121,9 @@ public class SimulatedAnnealingAlgorithm {
         long elapsedTime = System.currentTimeMillis() - startTime;
         log.info("========== VRP求解完成 ==========");
         log.info("总迭代次数: {}", iteration);
-        log.info("最优得分: {:.4f}", bestSolution.getScore());
-        log.info("总里程: {:.2f}", bestSolution.getTotalDistance());
-        log.info("耗时: {:.2f}秒", elapsedTime / 1000.0);
+        log.info("最优得分: {}", String.format("%.4f", bestSolution.getScore()));
+        log.info("总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
+        log.info("耗时: {}秒", String.format("%.2f", elapsedTime / 1000.0));
 
         return bestSolution;
     }

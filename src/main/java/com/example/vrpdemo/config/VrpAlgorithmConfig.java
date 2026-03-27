@@ -19,7 +19,7 @@ public class VrpAlgorithmConfig {
     private double initialTemperature = 10000.0;
 
     /** 终止温度（算法停止的温度阈值） */
-    private double finalTemperature = 0.001;
+    private double finalTemperature = 1;
 
     /** 
      * 降温系数（0-1之间）
@@ -35,21 +35,21 @@ public class VrpAlgorithmConfig {
      * 目标：最小化总行驶距离
      * 推荐值：0.35
      */
-    private double weightDistance = 0.35;
+    private double weightDistance = 0.15;
 
     /** 
      * 区域聚类权重
      * 目标：使每辆车的配送区域更集中
      * 推荐值：0.10
      */
-    private double weightCluster = 0.10;
+    private double weightCluster = 0.05;
 
     /** 
      * 负载均衡权重
      * 目标：使各车辆的里程更加均衡
      * 推荐值：0.55
      */
-    private double weightBalance = 0.55;
+    private double weightBalance = 0.80;
 
     // ==================== 扇形区域参数 ====================
 

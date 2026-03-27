@@ -11,6 +11,7 @@ import com.example.vrpdemo.mapper.VrpNodeMapper;
 import com.example.vrpdemo.mapper.VrpRouteDetailMapper;
 import com.example.vrpdemo.mapper.VrpTaskMapper;
 import com.example.vrpdemo.mapper.VrpVehicleMapper;
+import com.example.vrpdemo.service.DistanceService;
 import com.example.vrpdemo.service.VrpService;
 import com.example.vrpdemo.vo.NodeVO;
 import com.example.vrpdemo.vo.SolutionVO;
@@ -38,6 +39,7 @@ public class VrpServiceImpl implements VrpService {
     private final VrpTaskMapper taskMapper;
     private final VrpRouteDetailMapper routeDetailMapper;
     private final SimulatedAnnealingAlgorithm algorithm;
+    private final DistanceService distanceService;
 
     // ==================== 任务管理 ====================
 
@@ -80,23 +82,29 @@ public class VrpServiceImpl implements VrpService {
             task.setStatus(1);
             taskMapper.updateById(task);
 
+            // 0. 刷新距离缓存
+            distanceService.loadDistanceCache();
+
             // 1. 从数据库加载数据
             NodeVO depot = loadDepot();
-            List<NodeVO> deliveryNodes = loadDeliveryNodes();
+            List<NodeVO> deliveryNodes = loadDeliveryNodes(depot);
             List<VehicleVO> vehicles = loadVehicles(task.getVehicleCount());
 
             // 数据校验
             if (depot == null) {
                 throw new RuntimeException("数据库中未配置仓库节点，请先添加仓库");
             }
+            if (!distanceService.nodeExists(depot.getName())) {
+                throw new RuntimeException("仓库节点[" + depot.getName() + "]在道路距离表中不存在，请检查数据");
+            }
             if (deliveryNodes.isEmpty()) {
-                throw new RuntimeException("数据库中没有可用的配送点，请先生成测试数据");
+                throw new RuntimeException("没有可到达的配送点，请检查道路距离表数据");
             }
             if (vehicles.isEmpty()) {
                 throw new RuntimeException("数据库中没有可用的车辆，请先初始化车辆数据");
             }
 
-            log.info("开始计算: 仓库={}, 配送点数量={}, 车辆数量={}",
+            log.info("开始计算: 仓库={}, 可达配送点数量={}, 车辆数量={}",
                     depot.getName(), deliveryNodes.size(), vehicles.size());
 
             // 2. 执行算法求解
@@ -156,13 +164,78 @@ public class VrpServiceImpl implements VrpService {
     }
 
     /**
-     * 加载所有配送点
+     * 加载所有配送点（过滤不可达节点）
+     * @param depot 仓库节点，用于过滤不可达的配送点
      */
-    private List<NodeVO> loadDeliveryNodes() {
+    private List<NodeVO> loadDeliveryNodes(NodeVO depot) {
         List<VrpNode> entities = nodeMapper.selectActiveDeliveryPoints();
-        return entities.stream()
-                .map(this::convertToNodeVO)
-                .collect(Collectors.toList());
+        
+        List<NodeVO> reachableNodes = new ArrayList<>();
+        int filteredCount = 0;
+        
+        for (VrpNode entity : entities) {
+            NodeVO node = convertToNodeVO(entity);
+            
+            // 检查节点是否在距离表中存在
+            if (!distanceService.nodeExists(node.getName())) {
+                log.warn("配送点[{}]在道路距离表中不存在，已过滤", node.getName());
+                filteredCount++;
+                continue;
+            }
+            
+            // 如果有仓库，检查是否可以从仓库到达
+            if (depot != null && !distanceService.isReachable(depot.getName(), node.getName())) {
+                log.warn("配送点[{}]无法从仓库[{}]到达，已过滤", node.getName(), depot.getName());
+                filteredCount++;
+                continue;
+            }
+            
+            reachableNodes.add(node);
+        }
+        
+        if (filteredCount > 0) {
+            log.info("过滤不可达配送点: {} 个", filteredCount);
+        }
+        
+        // 检查配送点之间的可达性
+        if (depot != null && !reachableNodes.isEmpty()) {
+            checkDeliveryNodesReachability(depot, reachableNodes);
+        }
+        
+        return reachableNodes;
+    }
+
+    /**
+     * 检查配送点之间的可达性
+     * 如果存在不可达的情况，给出警告
+     */
+    private void checkDeliveryNodesReachability(NodeVO depot, List<NodeVO> nodes) {
+        int unreachableCount = 0;
+        List<String> unreachablePairs = new ArrayList<>();
+        
+        // 检查每两个节点之间是否可达（使用最短路径算法）
+        for (int i = 0; i < nodes.size(); i++) {
+            for (int j = i + 1; j < nodes.size(); j++) {
+                NodeVO n1 = nodes.get(i);
+                NodeVO n2 = nodes.get(j);
+                
+                if (!distanceService.isReachable(n1.getName(), n2.getName())) {
+                    unreachableCount++;
+                    if (unreachablePairs.size() < 10) { // 只记录前10个
+                        unreachablePairs.add(n1.getName() + " <-> " + n2.getName());
+                    }
+                }
+            }
+        }
+        
+        if (unreachableCount > 0) {
+            log.warn("发现 {} 对配送点之间没有可达路径（可能由于道路网络不连通）", unreachableCount);
+            for (String pair : unreachablePairs) {
+                log.warn("  不可达: {}", pair);
+            }
+        } else {
+            log.info("所有配送点之间均可到达");
+        }
     }
 
     /**
