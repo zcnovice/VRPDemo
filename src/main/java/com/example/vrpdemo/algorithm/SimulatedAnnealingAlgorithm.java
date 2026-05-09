@@ -125,6 +125,10 @@ public class SimulatedAnnealingAlgorithm {
         log.info("总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
         log.info("耗时: {}秒", String.format("%.2f", elapsedTime / 1000.0));
 
+        // 4. 顺路捎带优化：让车辆带上途经的节点
+        performDetourPickup(bestSolution, vehicleIds);
+        log.info("顺路捎带后总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
+
         return bestSolution;
     }
 
@@ -201,86 +205,172 @@ public class SimulatedAnnealingAlgorithm {
 
     /**
      * 负载均衡优化
-     * 检查各车辆负载，如果某车节点过多，溢出到相邻车辆
+     * 检查各车辆负载，处理过载和欠载车辆
      */
     private void balanceLoad(SolutionVO solution, List<VehicleVO> vehicles) {
         int numVehicles = vehicles.size();
         /* 计算每个车辆平均节点数 */
         double avgNodesPerVehicle = (double) deliveryNodes.size() / numVehicles;
-        /* 过载阈值：平均节点数的1.5倍 */
-        double overloadThreshold = avgNodesPerVehicle * 1.5;
+        /* 目标范围：平均节点数的0.8-1.2倍 */
+        double targetMin = avgNodesPerVehicle * 0.8;
+        double targetMax = avgNodesPerVehicle * 1.2;
 
         /* 遍历所有车辆获取到id */
         List<Long> vehicleIds = vehicles.stream().map(VehicleVO::getId).toList();
+        
+        log.info("负载均衡开始: 平均节点数={}, 目标范围=[{}, {}]", 
+                String.format("%.1f", avgNodesPerVehicle), 
+                String.format("%.1f", targetMin), 
+                String.format("%.1f", targetMax));
 
-        /* 遍历每一辆车 */
-        for (int i = 0; i < numVehicles; i++) {
-            Long vId = vehicleIds.get(i);
-            VehicleVO vehicle = solution.getVehicle(vId);
+        /* 多轮迭代均衡 */
+        for (int round = 0; round < 5; round++) {
+            boolean anyChange = false;
+            
+            for (int i = 0; i < numVehicles; i++) {
+                Long vId = vehicleIds.get(i);
+                VehicleVO vehicle = solution.getVehicle(vId);
 
-            // 如果车辆过载，尝试向邻居溢出
-            while (vehicle.getNodeCount() > overloadThreshold) {
-                // 查找相邻车辆
-                int rightIdx = (i + 1) % numVehicles;
-                int leftIdx = (i - 1 + numVehicles) % numVehicles;
+                // 如果车辆过载，尝试向邻居溢出
+                while (vehicle.getNodeCount() > targetMax) {
+                    // 查找所有其他车辆，按节点数升序排列
+                    List<VehicleVO> sortedVehicles = new ArrayList<>();
+                    for (int j = 0; j < numVehicles; j++) {
+                        if (j != i) {
+                            sortedVehicles.add(solution.getVehicle(vehicleIds.get(j)));
+                        }
+                    }
+                    sortedVehicles.sort(Comparator.comparingInt(VehicleVO::getNodeCount));
 
-                VehicleVO rightNeighbor = solution.getVehicle(vehicleIds.get(rightIdx));
-                VehicleVO leftNeighbor = solution.getVehicle(vehicleIds.get(leftIdx));
-
-                // 尝试向右邻居移动节点
-                boolean moved = moveEdgeNodeToNeighbor(vehicle, rightNeighbor);
-                if (!moved) {
-                    // 尝试向左邻居移动节点
-                    moved = moveEdgeNodeToNeighbor(vehicle, leftNeighbor);
+                    boolean moved = false;
+                    // 优先向节点最少的车辆移动（放宽扇形限制）
+                    for (VehicleVO targetVehicle : sortedVehicles) {
+                        if (targetVehicle.getNodeCount() < targetMax) {
+                            moved = moveNodeWithDistanceCheck(vehicle, targetVehicle, true);
+                            if (moved) break;
+                        }
+                    }
+                    if (!moved) break;
+                    anyChange = true;
                 }
 
-                if (!moved) break;
+                // 如果车辆欠载，从其他车辆拉取节点
+                while (vehicle.getNodeCount() < targetMin) {
+                    List<VehicleVO> sortedVehicles = new ArrayList<>();
+                    for (int j = 0; j < numVehicles; j++) {
+                        if (j != i) {
+                            sortedVehicles.add(solution.getVehicle(vehicleIds.get(j)));
+                        }
+                    }
+                    sortedVehicles.sort((a, b) -> Integer.compare(b.getNodeCount(), a.getNodeCount()));
+
+                    boolean moved = false;
+                    // 优先从节点最多的车辆拉取
+                    for (VehicleVO sourceVehicle : sortedVehicles) {
+                        if (sourceVehicle.getNodeCount() > targetMin) {
+                            moved = moveNodeWithDistanceCheck(sourceVehicle, vehicle, true);
+                            if (moved) break;
+                        }
+                    }
+                    if (!moved) break;
+                    anyChange = true;
+                }
             }
+            
+            if (!anyChange) break;
         }
+        
+        // 打印均衡后的结果
+        StringBuilder sb = new StringBuilder("负载均衡后各车辆节点数: ");
+        for (Long vId : vehicleIds) {
+            sb.append(solution.getVehicle(vId).getNodeCount()).append(", ");
+        }
+        log.info(sb.substring(0, sb.length() - 2));
     }
 
     /**
-     * 将过载车辆的边缘节点移动到邻居车辆
-     * @param fromVehicle 过载车辆
-     * @param toVehicle 邻居车辆
-     * @return 如果成功移动节点，返回true；否则返回false
+     * 将节点从一辆车移动到另一辆车，考虑距离因素
+     * @param fromVehicle 源车辆
+     * @param toVehicle 目标车辆
+     * @param relaxSector 是否放宽扇形限制
+     * @return 是否成功移动
      */
-    private boolean moveEdgeNodeToNeighbor(VehicleVO fromVehicle, VehicleVO toVehicle) {
+    private boolean moveNodeWithDistanceCheck(VehicleVO fromVehicle, VehicleVO toVehicle, boolean relaxSector) {
         if (fromVehicle.getNodeCount() == 0) {
             return false;
         }
 
-        // 获取目标车辆的扇形区域
-        double[] toSector = vehicleSectors.get(toVehicle.getId());
-        if (toSector == null) return false;
-
-        /* 扩展区起始, 扩展区结束 */
-        double extendedMin = toSector[2];
-        double extendedMax = toSector[3];
-
-        /* 遍历这些节点查看是否在扩展区域内，只会找到第一个符合条件的节点 */
+        // 找到距离目标车辆路线最近的节点
+        int bestIdx = -1;
+        double minExtraDistance = Double.MAX_VALUE;
+        
         for (int i = 0; i < fromVehicle.getNodeCount(); i++) {
             NodeVO node = fromVehicle.getRoute().get(i);
-            /* 获取节点角度 */
-            double angle = node.getAngle();
-
-            boolean inExtendedZone;
-            if (extendedMin > extendedMax) {
-                // 跨越0度的情况
-                inExtendedZone = angle >= extendedMin || angle <= extendedMax;
-            } else {
-                inExtendedZone = angle >= extendedMin && angle <= extendedMax;
+            
+            // 检查扇形区域（可放宽）
+            if (!relaxSector || !isNodeInSector(node, toVehicle.getId())) {
+                // 如果放宽限制，但节点不在扇形内，需要额外检查距离
+                if (!relaxSector && !isNodeInSector(node, toVehicle.getId())) {
+                    continue;
+                }
             }
-
-            /* 如果节点在扩展区域内，就移动到目标车辆 */
-            if (inExtendedZone) {
-                fromVehicle.removeNode(i);
-                toVehicle.addNode(node);
-                return true;
+            
+            // 计算插入到目标车辆的最佳位置
+            double extraDist = calculateBestInsertionCost(toVehicle, node);
+            if (extraDist < minExtraDistance) {
+                minExtraDistance = extraDist;
+                bestIdx = i;
             }
         }
 
+        if (bestIdx >= 0) {
+            NodeVO node = fromVehicle.removeNode(bestIdx);
+            insertAtBestPosition(toVehicle, node);
+            return true;
+        }
+
         return false;
+    }
+
+    /**
+     * 计算将节点插入到车辆的最佳位置的额外距离
+     */
+    private double calculateBestInsertionCost(VehicleVO vehicle, NodeVO node) {
+        if (vehicle.getNodeCount() == 0) {
+            return depot.distanceTo(node) * 2;
+        }
+
+        double minCost = Double.MAX_VALUE;
+        for (int pos = 0; pos <= vehicle.getNodeCount(); pos++) {
+            double cost = calculateInsertionCost(vehicle, node, pos);
+            if (cost < minCost) {
+                minCost = cost;
+            }
+        }
+        return minCost;
+    }
+
+    /**
+     * 将节点插入到车辆的最佳位置
+     */
+    private void insertAtBestPosition(VehicleVO vehicle, NodeVO node) {
+        if (vehicle.getNodeCount() == 0) {
+            vehicle.addNode(node);
+            return;
+        }
+
+        int bestPos = 0;
+        double minCost = calculateInsertionCost(vehicle, node, 0);
+        
+        for (int pos = 1; pos <= vehicle.getNodeCount(); pos++) {
+            double cost = calculateInsertionCost(vehicle, node, pos);
+            if (cost < minCost) {
+                minCost = cost;
+                bestPos = pos;
+            }
+        }
+        
+        vehicle.insertNode(bestPos, node);
     }
 
     // ==================== 邻域操作 ====================
@@ -544,5 +634,185 @@ public class SimulatedAnnealingAlgorithm {
 
         /* 如果交换后的距离差异小于当前距离差异，则交换 */
         return newDiff < currentDiff;
+    }
+
+    // ==================== 顺路捎带优化 ====================
+
+    /**
+     * 顺路捎带优化
+     * 检查每辆车的路线，如果途经某节点且绕行成本低，则将该节点从其他车辆转移过来
+     * 
+     * @param solution 解决方案
+     * @param vehicleIds 车辆ID列表
+     */
+    private void performDetourPickup(SolutionVO solution, List<Long> vehicleIds) {
+        log.info("========== 执行顺路捎带优化 ==========");
+        
+        /* 绕行阈值：最大允许的额外距离（公里） - 放宽到50km */
+        double detourThreshold = 50.0;
+        /* 绕行比例阈值：额外距离占比不超过此值 - 放宽到25% */
+        double detourRatioThreshold = 0.25;
+        
+        int pickupCount = 0;
+        boolean changed = true;
+        /* 最大迭代次数 */
+        int maxIterations = 50;
+        int iteration = 0;
+        
+        while (changed && iteration < maxIterations) {
+            changed = false;
+            iteration++;
+            
+            // 按节点数从少到多排序，优先处理节点少的车辆
+            List<VehicleVO> sortedVehicles = new ArrayList<>();
+            for (Long vid : vehicleIds) {
+                sortedVehicles.add(solution.getVehicle(vid));
+            }
+            sortedVehicles.sort(Comparator.comparingInt(VehicleVO::getNodeCount));
+            
+            for (VehicleVO vehicle : sortedVehicles) {
+                if (vehicle.getNodeCount() == 0) continue;
+                
+                // 计算当前路线的距离
+                double currentRouteDistance = vehicle.calculateDistance(depot);
+                
+                // 遍历其他车辆（节点数多的优先）
+                List<Long> otherVehicleIds = new ArrayList<>(vehicleIds);
+                otherVehicleIds.remove(vehicle.getId());
+                otherVehicleIds.sort((a, b) -> Integer.compare(
+                        solution.getVehicle(b).getNodeCount(), 
+                        solution.getVehicle(a).getNodeCount()));
+                
+                for (Long otherVid : otherVehicleIds) {
+                    VehicleVO otherVehicle = solution.getVehicle(otherVid);
+                    if (otherVehicle.getNodeCount() <= 2) continue; // 保留至少2个节点
+                    
+                    // 寻找最佳捎带节点
+                    DetourInsertion bestInsertion = findBestDetourInsertion(vehicle, otherVehicle);
+                    
+                    if (bestInsertion != null && bestInsertion.extraDistance < detourThreshold) {
+                        double ratio = currentRouteDistance > 0 ? bestInsertion.extraDistance / currentRouteDistance : 0;
+                        
+                        // 放宽判断条件：距离阈值或比例阈值任一满足即可
+                        if (bestInsertion.extraDistance < detourThreshold || ratio < detourRatioThreshold) {
+                            // 执行转移
+                            NodeVO nodeToMove = otherVehicle.removeNode(bestInsertion.nodeIndex);
+                            vehicle.insertNode(bestInsertion.insertIndex, nodeToMove);
+                            
+                            log.info("顺路捎带: 节点[{}]从V{}转移到V{}, 额外距离:{}km", 
+                                    nodeToMove.getName(), otherVid, vehicle.getId(), 
+                                    String.format("%.2f", bestInsertion.extraDistance));
+                            
+                            pickupCount++;
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+                if (changed) break;
+            }
+        }
+        
+        // 重新计算评分
+        solution.calculateScore(
+                config.getWeightDistance(),
+                config.getWeightCluster(),
+                config.getWeightBalance()
+        );
+        
+        log.info("顺路捎带完成，共转移 {} 个节点", pickupCount);
+    }
+    
+    /**
+     * 寻找最佳顺路捎带插入点
+     * 
+     * @param vehicle 目标车辆
+     * @param otherVehicle 其他车辆（节点来源）
+     * @return 最佳插入信息，如果没有合适的返回null
+     */
+    private DetourInsertion findBestDetourInsertion(VehicleVO vehicle, VehicleVO otherVehicle) {
+        DetourInsertion best = null;
+        double minExtraDistance = Double.MAX_VALUE;
+        
+        // 遍历其他车辆的每个节点
+        for (int nodeIdx = 0; nodeIdx < otherVehicle.getNodeCount(); nodeIdx++) {
+            NodeVO candidateNode = otherVehicle.getRoute().get(nodeIdx);
+            
+            // 检查该节点是否在目标车辆的扇形区域附近（放宽限制）
+            if (!isNodeNearSector(candidateNode, vehicle.getId())) {
+                continue;
+            }
+            
+            // 尝试插入到路线的每个位置
+            for (int insertPos = 0; insertPos <= vehicle.getNodeCount(); insertPos++) {
+                double extraDistance = calculateInsertionCost(vehicle, candidateNode, insertPos);
+                
+                if (extraDistance < minExtraDistance) {
+                    minExtraDistance = extraDistance;
+                    best = new DetourInsertion(nodeIdx, insertPos, extraDistance);
+                }
+            }
+        }
+        
+        return best;
+    }
+    
+    /**
+     * 计算在指定位置插入节点的额外距离成本
+     */
+    private double calculateInsertionCost(VehicleVO vehicle, NodeVO node, int insertPos) {
+        List<NodeVO> route = vehicle.getRoute();
+        
+        if (route.isEmpty()) {
+            // 如果路线为空，插入节点的成本是往返距离
+            return depot.distanceTo(node) * 2;
+        }
+        
+        double originalSegment;
+        double newSegment;
+        
+        if (insertPos == 0) {
+            // 插入到开头：仓库 -> 新节点 -> 原第一个节点
+            NodeVO firstNode = route.get(0);
+            originalSegment = depot.distanceTo(firstNode);
+            newSegment = depot.distanceTo(node) + node.distanceTo(firstNode);
+        } else if (insertPos >= route.size()) {
+            // 插入到末尾：原最后一个节点 -> 新节点 -> 仓库
+            NodeVO lastNode = route.get(route.size() - 1);
+            originalSegment = lastNode.distanceTo(depot);
+            newSegment = lastNode.distanceTo(node) + node.distanceTo(depot);
+        } else {
+            // 插入到中间：前节点 -> 新节点 -> 后节点
+            NodeVO prevNode = route.get(insertPos - 1);
+            NodeVO nextNode = route.get(insertPos);
+            originalSegment = prevNode.distanceTo(nextNode);
+            newSegment = prevNode.distanceTo(node) + node.distanceTo(nextNode);
+        }
+        
+        return newSegment - originalSegment;
+    }
+    
+    /**
+     * 判断节点是否在车辆扇形区域附近（大幅放宽限制）
+     * 允许跨区域捎带节点
+     */
+    private boolean isNodeNearSector(NodeVO node, Long vehicleId) {
+        // 顺路捎带时几乎不限制区域，只检查距离
+        return true;
+    }
+    
+    /**
+     * 顺路捎带插入信息内部类
+     */
+    private static class DetourInsertion {
+        int nodeIndex;      // 在源车辆中的节点索引
+        int insertIndex;    // 在目标车辆中的插入位置
+        double extraDistance; // 额外距离成本
+        
+        DetourInsertion(int nodeIndex, int insertIndex, double extraDistance) {
+            this.nodeIndex = nodeIndex;
+            this.insertIndex = insertIndex;
+            this.extraDistance = extraDistance;
+        }
     }
 }

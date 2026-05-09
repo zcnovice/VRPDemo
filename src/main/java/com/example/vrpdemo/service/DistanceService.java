@@ -101,6 +101,46 @@ public class DistanceService implements NodeVO.DistanceProvider {
             }
         }
     }
+    
+    /**
+     * 打印所有节点到指定仓库的最短距离
+     * 由外部调用，在加载仓库后执行
+     * 
+     * @param depotName 仓库名称
+     */
+    public void printDistancesToDepot(String depotName) {
+        log.info("尝试打印距离: depotName={}, allNodes包含该节点={}", depotName, allNodes.contains(depotName));
+        
+        if (depotName == null) {
+            log.warn("仓库名称为空，无法打印距离");
+            return;
+        }
+        
+        if (!allNodes.contains(depotName)) {
+            log.warn("仓库节点[{}]不存在于道路距离表中，可用节点: {}", depotName, allNodes);
+            return;
+        }
+        
+        log.info("========== 各节点到仓库[{}]的最短距离 ==========", depotName);
+        List<Map.Entry<String, Double>> sortedDistances = new ArrayList<>();
+        
+        for (String node : allNodes) {
+            if (!node.equals(depotName)) {
+                String key = depotName + "|" + node;
+                Double dist = allPairsDistance.get(key);
+                if (dist != null && dist < 999999.0) {
+                    sortedDistances.add(Map.entry(node, dist));
+                }
+            }
+        }
+        
+        // 按距离排序
+        sortedDistances.sort(Comparator.comparingDouble(Map.Entry::getValue));
+        for (Map.Entry<String, Double> entry : sortedDistances) {
+            log.info("  {} -> {}: {} km", depotName, entry.getKey(), String.format("%.2f", entry.getValue()));
+        }
+        log.info("================================================");
+    }
 
     @Override
     public double getDistance(String nodeName1, String nodeName2) {
@@ -130,44 +170,58 @@ public class DistanceService implements NodeVO.DistanceProvider {
      * @return 到所有节点的最短距离Map
      */
     private Map<String, Double> dijkstraAll(String start) {
+        /* 存储到所有节点的最短距离 */
         Map<String, Double> distances = new HashMap<>();
+        /* 标记已访问的节点 */
         Set<String> visited = new HashSet<>();
+        /* PriorityQueue是优先队列，根据元素中的distance字段排序 */
         PriorityQueue<NodeDistance> pq = new PriorityQueue<>(
                 Comparator.comparingDouble(NodeDistance::getDistance));
 
         // 初始化
+        /* 所有节点的距离都设置为无穷大 */
         for (String node : allNodes) {
             distances.put(node, 999999.0);
         }
         distances.put(start, 0.0);
+        /* 放入起点到队列 */
         pq.offer(new NodeDistance(start, 0.0));
 
         while (!pq.isEmpty()) {
+            /* 取出距离最小的节点 */
+            /* 优先处理当前节点最近的节点 */
             NodeDistance current = pq.poll();
             String currentNode = current.node;
 
+            /* 如果这个节点已经确定了已经访问过了，就跳过它 */
             if (visited.contains(currentNode)) {
                 continue;
             }
+            /* 标记当前节点为已访问 */
             visited.add(currentNode);
 
+            /* 获取当前节点的所有邻居节点 */
             Map<String, Double> neighbors = adjacencyMap.get(currentNode);
+            /* 如果当前节点没有邻居节点，就跳过它 */
             if (neighbors == null) continue;
 
+            /* 遍历当前节点的所有邻居节点 */
             for (Map.Entry<String, Double> entry : neighbors.entrySet()) {
                 String neighbor = entry.getKey();
                 double edgeDistance = entry.getValue();
 
+                /* 如果邻居节点已经确定了已经访问过了，就跳过它 */
                 if (visited.contains(neighbor)) continue;
 
+                /* newDistance = 起点到 -> 当前节点 + 当前节点 -> 邻居节点的距离 */
                 double newDistance = distances.get(currentNode) + edgeDistance;
+                /* 如果新距离小于当前记录的距离，就更新距离 */
                 if (newDistance < distances.get(neighbor)) {
                     distances.put(neighbor, newDistance);
                     pq.offer(new NodeDistance(neighbor, newDistance));
                 }
             }
         }
-
         return distances;
     }
 

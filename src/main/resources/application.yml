@@ -37,7 +37,7 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 关闭SQL日志输出
   global-config:
     db-config:
       id-type: auto
@@ -66,6 +66,8 @@ logging:
   level:
     root: INFO
     com.example.vrpdemo: DEBUG
-    com.baomidou.mybatisplus: DEBUG
+    com.baomidou.mybatisplus: WARN
+    org.apache.ibatis: WARN
+    org.mybatis: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

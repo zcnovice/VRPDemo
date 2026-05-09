@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
+/* 这个添加后相当于后面都添加了@Autowired注解（但是需要时带final关键字） */
 @RequiredArgsConstructor
 public class VrpServiceImpl implements VrpService {
 
@@ -72,6 +73,8 @@ public class VrpServiceImpl implements VrpService {
     @Override
     @Transactional
     public void executeTask(Long taskId) {
+        log.info("========== 开始执行任务: taskId={} ==========", taskId);
+        
         VrpTask task = taskMapper.selectById(taskId);
         if (task == null) {
             throw new RuntimeException("任务不存在: " + taskId);
@@ -82,12 +85,15 @@ public class VrpServiceImpl implements VrpService {
             task.setStatus(1);
             taskMapper.updateById(task);
 
-            // 0. 刷新距离缓存
-            distanceService.loadDistanceCache();
+            // 0. 刷新距离缓存(可选)
+            //distanceService.loadDistanceCache();
 
             // 1. 从数据库加载数据
+            /* 加载仓库节点 */
             NodeVO depot = loadDepot();
+            /* 加载可到达的配送点节点 */
             List<NodeVO> deliveryNodes = loadDeliveryNodes(depot);
+            /* 加载车辆数据 */
             List<VehicleVO> vehicles = loadVehicles(task.getVehicleCount());
 
             // 数据校验
@@ -106,6 +112,9 @@ public class VrpServiceImpl implements VrpService {
 
             log.info("开始计算: 仓库={}, 可达配送点数量={}, 车辆数量={}",
                     depot.getName(), deliveryNodes.size(), vehicles.size());
+
+            // 打印各节点到仓库的最短距离
+            distanceService.printDistancesToDepot(depot.getName());
 
             // 2. 执行算法求解
             SolutionVO solution = algorithm.solve(depot, deliveryNodes, vehicles);

@@ -16,10 +16,10 @@ public class VrpAlgorithmConfig {
     // ==================== 退火参数 ====================
 
     /** 初始温度（越高接受差解的概率越大，探索性越强） */
-    private double initialTemperature = 10000.0;
+    private double initialTemperature = 100000.0;
 
     /** 终止温度（算法停止的温度阈值） */
-    private double finalTemperature = 1;
+    private double finalTemperature = 0.01;
 
     /** 
      * 降温系数（0-1之间）

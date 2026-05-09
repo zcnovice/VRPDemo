@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 重要规则
+
+- **算法代码操作**：对算法代码（algorithm/、vo/目录下的文件）进行修改、读取、新增、删除操作时，**不要**主动查看"乡镇配送项目文档"目录。只有在用户明确要求读取时才去读取分析该目录内容。
+
 ## 项目概述
 
 基于Spring Boot的车辆路径规划(VRP)系统，使用模拟退火算法求解多车辆配送路径优化问题。支持基于实际道路距离的路径计算。

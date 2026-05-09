@@ -22,7 +22,7 @@ spring:
 # MyBatis-Plus配置
 mybatis-plus:
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 打印SQL
+    #log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 打印SQL
     map-underscore-to-camel-case: true
   global-config:
     db-config:
@@ -31,3 +31,12 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
   mapper-locations: classpath*:/mapper/**/*.xml
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.example.vrpdemo: INFO
+    com.example.vrpdemo.mapper: WARN
+    com.baomidou.mybatisplus: WARN
+    org.apache.ibatis: WARN
