@@ -42,6 +42,11 @@ public class SimulatedAnnealingAlgorithm {
     /* 算法开始时间 */
     private long startTime;
 
+    /* 自适应参考值（从初始解计算，用于评分归一化） */
+    private double refTotalDistance;
+    private double refCluster;
+    private double refBalance;
+
     public SimulatedAnnealingAlgorithm(VrpAlgorithmConfig config) {
         this.config = config;
     }
@@ -70,6 +75,15 @@ public class SimulatedAnnealingAlgorithm {
         // 1. 创建初始解
         SolutionVO currentSolution = createInitialSolution(vehicles, nodes);
         /* 这个时候每个车都有了对应的节点，并且已经计算了一个初始得分 */
+
+        // 从初始解提取自适应参考值（用于评分归一化）
+        this.refTotalDistance = Math.max(currentSolution.getTotalDistance(), 1.0);
+        this.refCluster = Math.max(currentSolution.getClusterScore(), 1.0);
+        this.refBalance = Math.max(currentSolution.getBalanceScore(), 1.0);
+        log.info("自适应参考值: 总里程={}, 聚类={}, 均衡={}",
+                String.format("%.0f", refTotalDistance),
+                String.format("%.1f", refCluster),
+                String.format("%.1f", refBalance));
 
         /* 初始解赋值给最优解 */
         SolutionVO bestSolution = currentSolution;
@@ -125,12 +139,12 @@ public class SimulatedAnnealingAlgorithm {
         log.info("总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
         log.info("耗时: {}秒", String.format("%.2f", elapsedTime / 1000.0));
 
-        // 4. 专项均衡优化：缩小最大最小里程差距
-        performBalanceRefinement(bestSolution, vehicleIds);
-
-        // 5. 顺路捎带优化：让车辆带上途经的节点
+        // 4. 顺路捎带优化：让车辆带上途经的节点（先执行，不破坏后续均衡）
         performDetourPickup(bestSolution, vehicleIds);
         log.info("顺路捎带后总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
+
+        // 5. 专项均衡优化：缩小最大最小里程差距（最后执行，保证成果不被覆盖）
+        performBalanceRefinement(bestSolution, vehicleIds);
 
         return bestSolution;
     }
@@ -200,7 +214,10 @@ public class SimulatedAnnealingAlgorithm {
         solution.calculateScore(
                 config.getWeightDistance(),
                 config.getWeightCluster(),
-                config.getWeightBalance()
+                config.getWeightBalance(),
+                refTotalDistance,
+                refCluster,
+                refBalance
         );
 
         return solution;
@@ -405,17 +422,17 @@ public class SimulatedAnnealingAlgorithm {
         double dist1 = v1.calculateDistance(depot);
         double dist2 = v2.calculateDistance(depot);
 
-        /* 节点数量不均衡（超过30%），或者距离不均衡（超过1.5倍） */
+        /* 节点数量不均衡（超过30%），或者距离不均衡（超过1.3倍） */
         boolean severeImbalance = (Math.abs(v1.getNodeCount() - v2.getNodeCount()) > avgNodes * 0.3)
-                || (Math.max(dist1, dist2) > Math.min(dist1, dist2) * 1.5);
+                || (Math.max(dist1, dist2) > Math.min(dist1, dist2) * 1.3);
 
         // 选择操作类型
         int moveType;
         if (severeImbalance) {
             moveType = rand.nextInt(3); // 0:交换, 1:移动, 2:均衡移动
         } else {
-            // 正常情况也有30%概率触发均衡移动
-            if (rand.nextDouble() < 0.3) {
+            // 正常情况也有50%概率触发均衡移动
+            if (rand.nextDouble() < 0.5) {
                 moveType = 2; // 均衡移动
             } else {
                 moveType = rand.nextInt(2); // 0:交换, 1:移动
@@ -437,7 +454,10 @@ public class SimulatedAnnealingAlgorithm {
         newSolution.calculateScore(
                 config.getWeightDistance(),
                 config.getWeightCluster(),
-                config.getWeightBalance()
+                config.getWeightBalance(),
+                refTotalDistance,
+                refCluster,
+                refBalance
         );
 
         return newSolution;
@@ -638,7 +658,7 @@ public class SimulatedAnnealingAlgorithm {
 
         int maxIterations = 500;
         double targetGapRatio = 0.10;
-        double maxDistIncreaseRatio = 0.05; // 总里程最多增加5%
+        double maxDistIncreaseRatio = 0.10; // 总里程最多增加10%
         int moveCount = 0;
 
         // 记录初始总里程作为约束基准
@@ -698,12 +718,9 @@ public class SimulatedAnnealingAlgorithm {
                 double removalSaving = calculateRemovalSaving(maxVehicle, i);
                 double hNew = maxDist - removalSaving;
 
-                // 尝试插入到每个其他车辆，找全局最优
+                // 尝试插入到每个其他车辆，找全局最优（无扇形约束，允许跨区域均衡）
                 for (Long targetVId : vehicleIds) {
                     if (targetVId.equals(maxVId)) continue;
-
-                    // 地理聚类约束：节点必须在目标车辆的扇形扩展区域内
-                    if (!isNodeInSector(node, targetVId)) continue;
 
                     VehicleVO targetVehicle = solution.getVehicle(targetVId);
                     double targetDist = targetVehicle.calculateDistance(depot);
@@ -766,7 +783,10 @@ public class SimulatedAnnealingAlgorithm {
         solution.calculateScore(
                 config.getWeightDistance(),
                 config.getWeightCluster(),
-                config.getWeightBalance()
+                config.getWeightBalance(),
+                refTotalDistance,
+                refCluster,
+                refBalance
         );
 
         // 打印最终各车里程
@@ -945,7 +965,10 @@ public class SimulatedAnnealingAlgorithm {
         solution.calculateScore(
                 config.getWeightDistance(),
                 config.getWeightCluster(),
-                config.getWeightBalance()
+                config.getWeightBalance(),
+                refTotalDistance,
+                refCluster,
+                refBalance
         );
         
         log.info("顺路捎带完成，共转移 {} 个节点", pickupCount);

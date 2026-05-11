@@ -86,14 +86,19 @@ public class SolutionVO {
     }
 
     /**
-     * 计算综合评分
-     * 评分函数 = 加权(总里程 + 聚类评分 + 均衡评分)
-     * 
+     * 计算综合评分（归一化版本）
+     * 评分函数 = 加权(总里程/参考值 + 聚类评分/参考值 + 均衡评分/参考值)
+     * 归一化使三个目标项在同一量级，权重才能真正反映其重要性
+     *
      * @param weightDistance 总里程权重
      * @param weightCluster 聚类权重
      * @param weightBalance 均衡权重
+     * @param refTotalDistance 总里程参考值
+     * @param refCluster 聚类评分参考值
+     * @param refBalance 均衡评分参考值
      */
-    public void calculateScore(double weightDistance, double weightCluster, double weightBalance) {
+    public void calculateScore(double weightDistance, double weightCluster, double weightBalance,
+                               double refTotalDistance, double refCluster, double refBalance) {
         // 1. 计算总里程
         calculateTotalDistance();
 
@@ -103,10 +108,14 @@ public class SolutionVO {
         // 3. 计算均衡评分
         calculateBalanceScore();
 
-        // 4. 加权求和
-        this.score = weightDistance * totalDistance
-                   + weightCluster * clusterScore
-                   + weightBalance * balanceScore;
+        // 4. 归一化加权求和（各项除以参考值，消除量级差异）
+        double normDistance = refTotalDistance > 0 ? totalDistance / refTotalDistance : totalDistance;
+        double normCluster = refCluster > 0 ? clusterScore / refCluster : clusterScore;
+        double normBalance = refBalance > 0 ? balanceScore / refBalance : balanceScore;
+
+        this.score = weightDistance * normDistance
+                   + weightCluster * normCluster
+                   + weightBalance * normBalance;
     }
 
     /**
