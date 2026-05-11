@@ -155,8 +155,9 @@ public class SolutionVO {
 
     /**
      * 计算均衡评分
-     * 方法：计算各车辆里程的标准差
-     * 评分越小表示各车辆负载越均衡
+     * 方法：(变异系数 + 最大最小差距惩罚) × 平均里程
+     * 乘以平均里程使评分与总里程同尺度，避免被总里程淹没
+     * 目标：各车辆里程差距不超过10%
      */
     private void calculateBalanceScore() {
         if (vehicleMap.isEmpty()) {
@@ -167,21 +168,41 @@ public class SolutionVO {
         // 计算各车辆里程
         List<Double> distances = new ArrayList<>();
         double sum = 0;
+        double minDist = Double.MAX_VALUE;
+        double maxDist = Double.MIN_VALUE;
         for (VehicleVO vehicle : vehicleMap.values()) {
             double dist = vehicle.calculateDistance(depot);
             distances.add(dist);
             sum += dist;
+            minDist = Math.min(minDist, dist);
+            maxDist = Math.max(maxDist, dist);
         }
 
         // 计算平均值
         double avg = sum / distances.size();
+        if (avg == 0) {
+            this.balanceScore = 0;
+            return;
+        }
 
         // 计算标准差
         double variance = 0;
         for (double dist : distances) {
             variance += Math.pow(dist - avg, 2);
         }
-        this.balanceScore = Math.sqrt(variance);
+        double stdDev = Math.sqrt(variance);
+
+        // 变异系数 = 标准差 / 平均值（归一化，消除规模影响）
+        double cv = stdDev / avg;
+
+        // 最大最小差距比 = (最大-最小) / 平均
+        double gapRatio = (maxDist - minDist) / avg;
+
+        // 差距超过10%的部分施加惩罚，惩罚系数5.0
+        double penalty = 5.0 * Math.max(0, gapRatio - 0.10);
+
+        // 乘以平均里程，使均衡评分与总里程在同一数量级
+        this.balanceScore = (cv + penalty) * avg;
     }
 
     /**

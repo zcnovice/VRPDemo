@@ -125,7 +125,10 @@ public class SimulatedAnnealingAlgorithm {
         log.info("总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
         log.info("耗时: {}秒", String.format("%.2f", elapsedTime / 1000.0));
 
-        // 4. 顺路捎带优化：让车辆带上途经的节点
+        // 4. 专项均衡优化：缩小最大最小里程差距
+        performBalanceRefinement(bestSolution, vehicleIds);
+
+        // 5. 顺路捎带优化：让车辆带上途经的节点
         performDetourPickup(bestSolution, vehicleIds);
         log.info("顺路捎带后总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
 
@@ -204,88 +207,84 @@ public class SimulatedAnnealingAlgorithm {
     }
 
     /**
-     * 负载均衡优化
-     * 检查各车辆负载，处理过载和欠载车辆
+     * 负载均衡优化（按里程均衡，而非节点数）
+     * 从高里程车辆移动节点到低里程车辆，直到差距收敛
+     * 节点数不重要，重要的是里程要平均
      */
     private void balanceLoad(SolutionVO solution, List<VehicleVO> vehicles) {
         int numVehicles = vehicles.size();
-        /* 计算每个车辆平均节点数 */
-        double avgNodesPerVehicle = (double) deliveryNodes.size() / numVehicles;
-        /* 目标范围：平均节点数的0.8-1.2倍 */
-        double targetMin = avgNodesPerVehicle * 0.8;
-        double targetMax = avgNodesPerVehicle * 1.2;
-
-        /* 遍历所有车辆获取到id */
+        int minNodesPerVehicle = 3; // 每车最少保留节点数
         List<Long> vehicleIds = vehicles.stream().map(VehicleVO::getId).toList();
-        
-        log.info("负载均衡开始: 平均节点数={}, 目标范围=[{}, {}]", 
-                String.format("%.1f", avgNodesPerVehicle), 
-                String.format("%.1f", targetMin), 
-                String.format("%.1f", targetMax));
 
-        /* 多轮迭代均衡 */
-        for (int round = 0; round < 5; round++) {
-            boolean anyChange = false;
-            
-            for (int i = 0; i < numVehicles; i++) {
-                Long vId = vehicleIds.get(i);
-                VehicleVO vehicle = solution.getVehicle(vId);
+        log.info("负载均衡开始（按里程均衡）");
 
-                // 如果车辆过载，尝试向邻居溢出
-                while (vehicle.getNodeCount() > targetMax) {
-                    // 查找所有其他车辆，按节点数升序排列
-                    List<VehicleVO> sortedVehicles = new ArrayList<>();
-                    for (int j = 0; j < numVehicles; j++) {
-                        if (j != i) {
-                            sortedVehicles.add(solution.getVehicle(vehicleIds.get(j)));
-                        }
+        // 多轮迭代，从高里程车移节点到低里程车
+        for (int round = 0; round < 200; round++) {
+            // 计算所有车辆里程，找最大最小
+            double maxDist = 0, minDist = Double.MAX_VALUE;
+            Long maxVId = null, minVId = null;
+            double sumDist = 0;
+
+            for (Long vid : vehicleIds) {
+                double dist = solution.getVehicle(vid).calculateDistance(depot);
+                sumDist += dist;
+                if (dist > maxDist) { maxDist = dist; maxVId = vid; }
+                if (dist < minDist) { minDist = dist; minVId = vid; }
+            }
+
+            double avgDist = sumDist / numVehicles;
+            double gapRatio = avgDist > 0 ? (maxDist - minDist) / avgDist : 0;
+
+            // 差距在15%以内或无法继续时停止
+            if (gapRatio <= 0.15) {
+                log.info("负载均衡完成: 差距比={}% (目标15%)", String.format("%.1f", gapRatio * 100));
+                break;
+            }
+
+            VehicleVO maxVehicle = solution.getVehicle(maxVId);
+            VehicleVO minVehicle = solution.getVehicle(minVId);
+
+            // 高里程车节点数不足时跳过
+            if (maxVehicle.getNodeCount() <= minNodesPerVehicle) {
+                // 尝试找次高里程车
+                boolean found = false;
+                for (Long vid : vehicleIds) {
+                    if (vid.equals(maxVId)) continue;
+                    VehicleVO v = solution.getVehicle(vid);
+                    if (v.calculateDistance(depot) > avgDist && v.getNodeCount() > minNodesPerVehicle) {
+                        maxVehicle = v;
+                        maxVId = vid;
+                        found = true;
+                        break;
                     }
-                    sortedVehicles.sort(Comparator.comparingInt(VehicleVO::getNodeCount));
-
-                    boolean moved = false;
-                    // 优先向节点最少的车辆移动（放宽扇形限制）
-                    for (VehicleVO targetVehicle : sortedVehicles) {
-                        if (targetVehicle.getNodeCount() < targetMax) {
-                            moved = moveNodeWithDistanceCheck(vehicle, targetVehicle, true);
-                            if (moved) break;
-                        }
-                    }
-                    if (!moved) break;
-                    anyChange = true;
                 }
-
-                // 如果车辆欠载，从其他车辆拉取节点
-                while (vehicle.getNodeCount() < targetMin) {
-                    List<VehicleVO> sortedVehicles = new ArrayList<>();
-                    for (int j = 0; j < numVehicles; j++) {
-                        if (j != i) {
-                            sortedVehicles.add(solution.getVehicle(vehicleIds.get(j)));
-                        }
-                    }
-                    sortedVehicles.sort((a, b) -> Integer.compare(b.getNodeCount(), a.getNodeCount()));
-
-                    boolean moved = false;
-                    // 优先从节点最多的车辆拉取
-                    for (VehicleVO sourceVehicle : sortedVehicles) {
-                        if (sourceVehicle.getNodeCount() > targetMin) {
-                            moved = moveNodeWithDistanceCheck(sourceVehicle, vehicle, true);
-                            if (moved) break;
-                        }
-                    }
-                    if (!moved) break;
-                    anyChange = true;
+                if (!found) {
+                    log.info("负载均衡: 高里程车均不足{}个节点，停止", minNodesPerVehicle);
+                    break;
                 }
             }
-            
-            if (!anyChange) break;
+
+            // 从高里程车移动一个节点到低里程车
+            boolean moved = moveNodeWithDistanceCheck(maxVehicle, minVehicle, true);
+            if (!moved) {
+                log.info("负载均衡: 第{}轮无法移动节点，停止。差距比={}",
+                        round, String.format("%.1f", gapRatio * 100));
+                break;
+            }
         }
-        
+
         // 打印均衡后的结果
-        StringBuilder sb = new StringBuilder("负载均衡后各车辆节点数: ");
+        StringBuilder sb = new StringBuilder("负载均衡后各车辆里程: ");
         for (Long vId : vehicleIds) {
-            sb.append(solution.getVehicle(vId).getNodeCount()).append(", ");
+            sb.append(String.format("%.0f", solution.getVehicle(vId).calculateDistance(depot))).append("km, ");
         }
         log.info(sb.substring(0, sb.length() - 2));
+
+        StringBuilder sbNodes = new StringBuilder("负载均衡后各车辆节点数: ");
+        for (Long vId : vehicleIds) {
+            sbNodes.append(solution.getVehicle(vId).getNodeCount()).append(", ");
+        }
+        log.info(sbNodes.substring(0, sbNodes.length() - 2));
     }
 
     /**
@@ -406,16 +405,21 @@ public class SimulatedAnnealingAlgorithm {
         double dist1 = v1.calculateDistance(depot);
         double dist2 = v2.calculateDistance(depot);
 
-        /* 节点数量不均衡（超过40%），或者距离不均衡（超过2倍） */
-        boolean severeImbalance = (Math.abs(v1.getNodeCount() - v2.getNodeCount()) > avgNodes * 0.4)
-                || (Math.max(dist1, dist2) > Math.min(dist1, dist2) * 2);
+        /* 节点数量不均衡（超过30%），或者距离不均衡（超过1.5倍） */
+        boolean severeImbalance = (Math.abs(v1.getNodeCount() - v2.getNodeCount()) > avgNodes * 0.3)
+                || (Math.max(dist1, dist2) > Math.min(dist1, dist2) * 1.5);
 
         // 选择操作类型
         int moveType;
         if (severeImbalance) {
             moveType = rand.nextInt(3); // 0:交换, 1:移动, 2:均衡移动
         } else {
-            moveType = rand.nextInt(2); // 0:交换, 1:移动
+            // 正常情况也有30%概率触发均衡移动
+            if (rand.nextDouble() < 0.3) {
+                moveType = 2; // 均衡移动
+            } else {
+                moveType = rand.nextInt(2); // 0:交换, 1:移动
+            }
         }
 
         // 执行操作
@@ -464,16 +468,11 @@ public class SimulatedAnnealingAlgorithm {
 
 
                 /* 决定什么节点可以加入有效交换列表 */
-                /* 满足交换后里程跟接近 或者 两个节点有共同的扇形区域 */
-                if (severeImbalance) {
-                    /* 负载不均衡的时候，交换后负载是否均衡 */
-                    if (canImproveBalance(v1, v2, i, j) || (n2InV1 && n1InV2)) {
-                        validPairs.add(new int[]{i, j});
-                    }
-                } else {
-                    /* 两个节点有共同的扇形区域 */
-                    // 正常情况，严格扇形约束
-                    if (n2InV1 && n1InV2) {
+                // 统一要求：两个节点必须在对方的扩展扇形区域内（防止地理漂移）
+                if (n2InV1 && n1InV2) {
+                    // 严重不均衡时：扇形内即可交换（放宽距离约束）
+                    // 正常情况：扇形内且交换后距离差缩小
+                    if (severeImbalance || canImproveBalance(v1, v2, i, j)) {
                         validPairs.add(new int[]{i, j});
                     }
                 }
@@ -556,27 +555,12 @@ public class SimulatedAnnealingAlgorithm {
 
         Random rand = new Random();
 
-        // 扩大搜索范围
-        /* 相比于普通移动（performMove），负载均衡移动会扩大搜索的范围 */
-        /* 范围会扩大到车辆1的扇形区域 和 车辆2的扇形区域 的交集 */
-        double searchRange = baseAngle * (1 + config.getOverlapRatio() * 2);
+        // 使用扇形扩展区域检查（与普通移动一致，防止地理漂移）
         List<Integer> candidates = new ArrayList<>();
-
-        double[] toSector = vehicleSectors.get(toId);
-        if (toSector == null) return;
-
-        double sectorCenter = (toSector[2] + toSector[3]) / 2;
-        if (toSector[2] > toSector[3]) {
-            sectorCenter = (toSector[2] + (toSector[3] + 360)) / 2;
-            if (sectorCenter > 360) sectorCenter -= 360;
-        }
 
         for (int i = 0; i < fromVehicle.getNodeCount(); i++) {
             NodeVO node = fromVehicle.getRoute().get(i);
-            double angleDiff = Math.abs(node.getAngle() - sectorCenter);
-            if (angleDiff > 180) angleDiff = 360 - angleDiff;
-
-            if (angleDiff <= searchRange / 2) {
+            if (isNodeInSector(node, toId)) {
                 candidates.add(i);
             }
         }
@@ -610,30 +594,274 @@ public class SimulatedAnnealingAlgorithm {
     }
 
     /**
-     * 判断交换是否能改善负载均衡
+     * 判断交换是否能改善负载均衡（带地理约束）
+     * 必须同时满足：1) 两个节点在对方的扩展扇形区域内 2) 交换后距离差缩小
      * @param v1 车辆1
      * @param v2 车辆2
      * @param idx1 车辆1的节点索引
      * @param idx2 车辆2的节点索引
      */
     private boolean canImproveBalance(VehicleVO v1, VehicleVO v2, int idx1, int idx2) {
+        NodeVO n1 = v1.getRoute().get(idx1);
+        NodeVO n2 = v2.getRoute().get(idx2);
+
+        // 地理约束：两个节点必须在对方的扩展扇形区域内，防止跨扇形漂移
+        if (!isNodeInSector(n1, v2.getId()) || !isNodeInSector(n2, v1.getId())) {
+            return false;
+        }
+
         /* 计算当前两辆车到仓库的距离差异 */
         double currentDiff = Math.abs(v1.calculateDistance(depot) - v2.calculateDistance(depot));
 
-        // 简化估算交换后的差异
-        /* 获取要交换的两个节点 */
-        NodeVO n1 = v1.getRoute().get(idx1);
-        NodeVO n2 = v2.getRoute().get(idx2);
-        /* 计算这两个节点到仓库的直线距离 */
-        double n1Dist = depot.distanceTo(n1);
-        double n2Dist = depot.distanceTo(n2);
+        // 使用移除/插入成本估算交换后的差异（基于道路距离）
+        double removeSavingV1 = calculateRemovalSaving(v1, idx1);
+        double insertCostV1 = calculateBestInsertionCost(v1, n2);
+        double v1New = v1.calculateDistance(depot) - removeSavingV1 + insertCostV1;
 
-        /* 计算交换后的距离差异 */
-        double newDiff = Math.abs((v1.calculateDistance(depot) - n1Dist + n2Dist)
-                - (v2.calculateDistance(depot) - n2Dist + n1Dist));
+        double removeSavingV2 = calculateRemovalSaving(v2, idx2);
+        double insertCostV2 = calculateBestInsertionCost(v2, n1);
+        double v2New = v2.calculateDistance(depot) - removeSavingV2 + insertCostV2;
 
-        /* 如果交换后的距离差异小于当前距离差异，则交换 */
+        double newDiff = Math.abs(v1New - v2New);
         return newDiff < currentDiff;
+    }
+
+    // ==================== 专项均衡优化 ====================
+
+    /**
+     * 专项均衡优化
+     * 迭代地从里程最高的车辆向里程最低的车辆移动节点，缩小最大最小差距
+     * 目标：最大里程/最小里程差距在10%以内
+     */
+    private void performBalanceRefinement(SolutionVO solution, List<Long> vehicleIds) {
+        log.info("========== 执行专项均衡优化 ==========");
+
+        int maxIterations = 500;
+        double targetGapRatio = 0.10;
+        double maxDistIncreaseRatio = 0.05; // 总里程最多增加5%
+        int moveCount = 0;
+
+        // 记录初始总里程作为约束基准
+        double baselineTotalDist = 0;
+        for (Long vid : vehicleIds) {
+            baselineTotalDist += solution.getVehicle(vid).calculateDistance(depot);
+        }
+        double maxAllowedDist = baselineTotalDist * (1 + maxDistIncreaseRatio);
+
+        for (int iter = 0; iter < maxIterations; iter++) {
+            // 计算所有车辆里程，找出最大最小
+            double maxDist = 0, minDist = Double.MAX_VALUE;
+            Long maxVId = null, minVId = null;
+            double sumDist = 0;
+
+            for (Long vid : vehicleIds) {
+                double dist = solution.getVehicle(vid).calculateDistance(depot);
+                sumDist += dist;
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    maxVId = vid;
+                }
+                if (dist < minDist) {
+                    minDist = dist;
+                    minVId = vid;
+                }
+            }
+
+            double avgDist = sumDist / vehicleIds.size();
+            double gapRatio = avgDist > 0 ? (maxDist - minDist) / avgDist : 0;
+
+            if (gapRatio <= targetGapRatio) {
+                log.info("专项均衡优化: 差距比={}% 已达标(目标10%)，共移动{}个节点",
+                        String.format("%.1f", gapRatio * 100), moveCount);
+                break;
+            }
+
+            VehicleVO maxVehicle = solution.getVehicle(maxVId);
+            VehicleVO minVehicle = solution.getVehicle(minVId);
+
+            // 高里程车只剩1个节点时无法继续移动
+            if (maxVehicle.getNodeCount() <= 1) {
+                log.info("专项均衡优化: 高里程车V{}仅剩{}个节点，停止", maxVId, maxVehicle.getNodeCount());
+                break;
+            }
+
+            // 从高里程车的每个节点中，找到移动到任一车辆后全局差距最小的方案
+            // 约束1：总里程增加不超过5%
+            // 约束2：节点必须在目标车辆的扇形扩展区域内（地理聚类约束）
+            int bestNodeIdx = -1;
+            Long bestTargetVId = null;
+            double bestGlobalGap = maxDist - minDist;
+            double bestNewTotalDist = sumDist;
+
+            for (int i = 0; i < maxVehicle.getNodeCount(); i++) {
+                NodeVO node = maxVehicle.getRoute().get(i);
+                double removalSaving = calculateRemovalSaving(maxVehicle, i);
+                double hNew = maxDist - removalSaving;
+
+                // 尝试插入到每个其他车辆，找全局最优
+                for (Long targetVId : vehicleIds) {
+                    if (targetVId.equals(maxVId)) continue;
+
+                    // 地理聚类约束：节点必须在目标车辆的扇形扩展区域内
+                    if (!isNodeInSector(node, targetVId)) continue;
+
+                    VehicleVO targetVehicle = solution.getVehicle(targetVId);
+                    double targetDist = targetVehicle.calculateDistance(depot);
+                    double insertionCost = calculateBestInsertionCost(targetVehicle, node);
+                    double tNew = targetDist + insertionCost;
+
+                    // 计算新的总里程
+                    double newTotalDist = sumDist - removalSaving + insertionCost;
+                    // 总里程约束
+                    if (newTotalDist > maxAllowedDist) continue;
+
+                    // 计算移动后的全局最大最小差距
+                    double newMax = hNew, newMin = tNew;
+                    if (hNew < tNew) { newMax = tNew; newMin = hNew; }
+                    for (Long vid : vehicleIds) {
+                        if (vid.equals(maxVId) || vid.equals(targetVId)) continue;
+                        double d = solution.getVehicle(vid).calculateDistance(depot);
+                        if (d > newMax) newMax = d;
+                        if (d < newMin) newMin = d;
+                    }
+
+                    double newGap = newMax - newMin;
+                    // 优先选差距最小的，差距相同时选总里程增加最少的
+                    if (newGap < bestGlobalGap || (newGap == bestGlobalGap && newTotalDist < bestNewTotalDist)) {
+                        bestGlobalGap = newGap;
+                        bestNodeIdx = i;
+                        bestTargetVId = targetVId;
+                        bestNewTotalDist = newTotalDist;
+                    }
+                }
+            }
+
+            if (bestNodeIdx >= 0 && bestTargetVId != null) {
+                // 执行最佳移动
+                NodeVO movedNode = maxVehicle.removeNode(bestNodeIdx);
+                VehicleVO targetVehicle = solution.getVehicle(bestTargetVId);
+                insertAtBestPosition(targetVehicle, movedNode);
+                moveCount++;
+
+                if (iter % 20 == 0) {
+                    log.info("专项均衡优化第{}轮: 移动节点[{}] V{}->V{}, 全局差距={}km, 总里程={}km",
+                            iter, movedNode.getName(), maxVId, bestTargetVId,
+                            String.format("%.0f", bestGlobalGap),
+                            String.format("%.0f", bestNewTotalDist));
+                }
+            } else {
+                // 移动无法改善（可能受总里程约束），尝试交换
+                boolean swapped = tryBalanceSwap(solution, maxVehicle, minVehicle, maxDist, minDist);
+                if (!swapped) {
+                    log.info("专项均衡优化: 第{}轮无法改善，停止。差距比={}, 总里程={}km",
+                            iter, String.format("%.1f", gapRatio * 100),
+                            String.format("%.0f", sumDist));
+                    break;
+                }
+                moveCount++;
+            }
+        }
+
+        // 重新计算评分
+        solution.calculateScore(
+                config.getWeightDistance(),
+                config.getWeightCluster(),
+                config.getWeightBalance()
+        );
+
+        // 打印最终各车里程
+        StringBuilder sb = new StringBuilder("专项均衡优化后各车辆里程: ");
+        for (Long vid : vehicleIds) {
+            sb.append(String.format("%.0f", solution.getVehicle(vid).calculateDistance(depot)));
+            sb.append("km, ");
+        }
+        log.info(sb.substring(0, sb.length() - 2));
+    }
+
+    /**
+     * 计算从车辆路线中移除指定位置节点后的距离节省
+     * @param vehicle 车辆
+     * @param pos 节点在路线中的位置
+     * @return 移除后节省的距离（正值）
+     */
+    private double calculateRemovalSaving(VehicleVO vehicle, int pos) {
+        List<NodeVO> route = vehicle.getRoute();
+        NodeVO node = route.get(pos);
+
+        if (route.size() == 1) {
+            // 只有一个节点，移除后节省往返距离
+            return depot.distanceTo(node) * 2;
+        }
+
+        if (pos == 0) {
+            // 首节点：depot -> node -> next 变为 depot -> next
+            NodeVO next = route.get(1);
+            return depot.distanceTo(node) + node.distanceTo(next) - depot.distanceTo(next);
+        }
+
+        if (pos == route.size() - 1) {
+            // 尾节点：prev -> node -> depot 变为 prev -> depot
+            NodeVO prev = route.get(pos - 1);
+            return prev.distanceTo(node) + node.distanceTo(depot) - prev.distanceTo(depot);
+        }
+
+        // 中间节点：prev -> node -> next 变为 prev -> next
+        NodeVO prev = route.get(pos - 1);
+        NodeVO next = route.get(pos + 1);
+        return prev.distanceTo(node) + node.distanceTo(next) - prev.distanceTo(next);
+    }
+
+    /**
+     * 尝试在高里程车和低里程车之间交换节点以缩小差距
+     * 使用直接计算真实距离的方式（非估算）
+     * @return 是否成功交换
+     */
+    private boolean tryBalanceSwap(SolutionVO solution, VehicleVO maxVehicle, VehicleVO minVehicle,
+                                    double maxDist, double minDist) {
+        double currentGap = maxDist - minDist;
+        double bestGap = currentGap;
+        int bestI = -1, bestJ = -1;
+
+        // 遍历高里程车的边缘节点（首尾）和低里程车的全部节点
+        List<Integer> maxCandidates = new ArrayList<>();
+        if (maxVehicle.getNodeCount() > 0) maxCandidates.add(0);
+        if (maxVehicle.getNodeCount() > 1) maxCandidates.add(maxVehicle.getNodeCount() - 1);
+
+        for (int i : maxCandidates) {
+            NodeVO n1 = maxVehicle.getRoute().get(i);
+
+            for (int j = 0; j < minVehicle.getNodeCount(); j++) {
+                NodeVO n2 = minVehicle.getRoute().get(j);
+
+                // 临时交换，直接计算真实距离
+                maxVehicle.getRoute().set(i, n2);
+                minVehicle.getRoute().set(j, n1);
+
+                double hNew = maxVehicle.calculateDistance(depot);
+                double lNew = minVehicle.calculateDistance(depot);
+                double newGap = Math.abs(hNew - lNew);
+
+                if (newGap < bestGap) {
+                    bestGap = newGap;
+                    bestI = i;
+                    bestJ = j;
+                }
+
+                // 还原
+                maxVehicle.getRoute().set(i, n1);
+                minVehicle.getRoute().set(j, n2);
+            }
+        }
+
+        if (bestI >= 0 && bestJ >= 0) {
+            // 执行最佳交换
+            NodeVO n1 = maxVehicle.getRoute().get(bestI);
+            NodeVO n2 = minVehicle.getRoute().get(bestJ);
+            maxVehicle.getRoute().set(bestI, n2);
+            minVehicle.getRoute().set(bestJ, n1);
+            return true;
+        }
+        return false;
     }
 
     // ==================== 顺路捎带优化 ====================
