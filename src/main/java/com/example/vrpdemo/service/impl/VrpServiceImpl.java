@@ -286,6 +286,7 @@ public class VrpServiceImpl implements VrpService {
 
         for (VehicleVO vehicle : solution.getVehicles()) {
             NodeVO prevNode = solution.getDepot();
+            NodeVO lastNode = null;
 
             for (int i = 0; i < vehicle.getNodeCount(); i++) {
                 NodeVO currentNode = vehicle.getRoute().get(i);
@@ -300,6 +301,19 @@ public class VrpServiceImpl implements VrpService {
 
                 details.add(detail);
                 prevNode = currentNode;
+                lastNode = currentNode;
+            }
+
+            // 补加返程段：最后一个节点 → 仓库
+            if (lastNode != null) {
+                VrpRouteDetail returnDetail = new VrpRouteDetail();
+                returnDetail.setTaskId(taskId);
+                returnDetail.setVehicleId(vehicle.getId());
+                returnDetail.setSequence(vehicle.getNodeCount() + 1);
+                returnDetail.setNodeId(solution.getDepot().getId());
+                returnDetail.setDistanceFromPrev(lastNode.distanceTo(solution.getDepot()));
+                returnDetail.setCreateTime(LocalDateTime.now());
+                details.add(returnDetail);
             }
         }
 

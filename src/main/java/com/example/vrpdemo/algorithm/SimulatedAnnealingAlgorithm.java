@@ -146,6 +146,9 @@ public class SimulatedAnnealingAlgorithm {
         // 5. 专项均衡优化：缩小最大最小里程差距（最后执行，保证成果不被覆盖）
         performBalanceRefinement(bestSolution, vehicleIds);
 
+        // 6. 兜底微调：如果最低里程车仍偏低，从最高车移节点给它
+        performGapClosing(bestSolution, vehicleIds);
+
         return bestSolution;
     }
 
@@ -882,6 +885,93 @@ public class SimulatedAnnealingAlgorithm {
             return true;
         }
         return false;
+    }
+
+    // ==================== 兜底微调 ====================
+
+    /**
+     * 兜底微调：针对最低里程车的最后补救
+     * 从最高里程车的边缘节点中，找到移动后差距缩小的节点，直接移动
+     * 不考虑扇形约束，只看里程差距是否缩小
+     */
+    private void performGapClosing(SolutionVO solution, List<Long> vehicleIds) {
+        log.info("========== 执行兜底微调 ==========");
+
+        double targetGapRatio = 0.15;
+        int maxIterations = 100;
+        int moveCount = 0;
+
+        for (int iter = 0; iter < maxIterations; iter++) {
+            // 找最高和最低里程车
+            double maxDist = 0, minDist = Double.MAX_VALUE;
+            Long maxVId = null, minVId = null;
+            double sumDist = 0;
+
+            for (Long vid : vehicleIds) {
+                double dist = solution.getVehicle(vid).calculateDistance(depot);
+                sumDist += dist;
+                if (dist > maxDist) { maxDist = dist; maxVId = vid; }
+                if (dist < minDist) { minDist = dist; minVId = vid; }
+            }
+
+            double avgDist = sumDist / vehicleIds.size();
+            double gapRatio = avgDist > 0 ? (maxDist - minDist) / avgDist : 0;
+
+            if (gapRatio <= targetGapRatio) {
+                log.info("兜底微调: 差距比={}% 已达标(目标15%)", String.format("%.1f", gapRatio * 100));
+                break;
+            }
+
+            VehicleVO maxVehicle = solution.getVehicle(maxVId);
+            VehicleVO minVehicle = solution.getVehicle(minVId);
+
+            if (maxVehicle.getNodeCount() <= 1) break;
+
+            // 从最高里程车的边缘节点中找最佳移动
+            int bestIdx = -1;
+            double bestGap = maxDist - minDist;
+
+            List<Integer> edgeIndices = new ArrayList<>();
+            edgeIndices.add(0);
+            if (maxVehicle.getNodeCount() > 1) edgeIndices.add(maxVehicle.getNodeCount() - 1);
+
+            for (int i : edgeIndices) {
+                NodeVO node = maxVehicle.getRoute().get(i);
+                double removalSaving = calculateRemovalSaving(maxVehicle, i);
+                double hNew = maxDist - removalSaving;
+                double insertionCost = calculateBestInsertionCost(minVehicle, node);
+                double lNew = minDist + insertionCost;
+                double newGap = Math.abs(hNew - lNew);
+                if (newGap < bestGap) {
+                    bestGap = newGap;
+                    bestIdx = i;
+                }
+            }
+
+            if (bestIdx < 0) break;
+
+            NodeVO movedNode = maxVehicle.removeNode(bestIdx);
+            insertAtBestPosition(minVehicle, movedNode);
+            moveCount++;
+        }
+
+        // 重新计算评分
+        solution.calculateScore(
+                config.getWeightDistance(),
+                config.getWeightCluster(),
+                config.getWeightBalance(),
+                refTotalDistance,
+                refCluster,
+                refBalance
+        );
+
+        // 打印最终结果
+        StringBuilder sb = new StringBuilder("兜底微调后各车辆里程: ");
+        for (Long vid : vehicleIds) {
+            sb.append(String.format("%.0f", solution.getVehicle(vid).calculateDistance(depot))).append("km, ");
+        }
+        log.info(sb.substring(0, sb.length() - 2));
+        log.info("兜底微调完成，共移动{}个节点", moveCount);
     }
 
     // ==================== 顺路捎带优化 ====================
