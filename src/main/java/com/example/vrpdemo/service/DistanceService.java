@@ -39,6 +39,12 @@ public class DistanceService implements NodeVO.DistanceProvider {
     private Map<String, Double> allPairsDistance = new HashMap<>();
 
     /**
+     * 预计算的所有节点对最短路径缓存
+     * key: "fromNode|toNode", value: 途径节点列表（包含起点和终点）
+     */
+    private Map<String, List<String>> allPairsPath = new HashMap<>();
+
+    /**
      * 初始化加载所有距离数据到缓存
      */
     /* @PostConstruct系统启动时执行一次 */
@@ -57,6 +63,7 @@ public class DistanceService implements NodeVO.DistanceProvider {
         adjacencyMap.clear();
         allNodes.clear();
         allPairsDistance.clear();
+        allPairsPath.clear();
 
         // 1. 加载道路数据，构建邻接表
         var routes = routeMapper.selectAllRoutes();
@@ -85,21 +92,39 @@ public class DistanceService implements NodeVO.DistanceProvider {
 
     /**
      * 预计算所有节点对的最短路径
-     * 对每个节点执行一次Dijkstra，缓存到所有其他节点的最短距离
+     * 对每个节点执行一次Dijkstra，缓存到所有其他节点的最短距离和路径
      */
     private void precomputeAllPairsShortestPath() {
         for (String source : allNodes) {
-            /* dijkstraAll -- Dijkstra算法获取最短路径 */
-            Map<String, Double> distances = dijkstraAll(source);
+            DijkstraResult result = dijkstraAll(source);
+            Map<String, Double> distances = result.distances;
+            Map<String, String> prev = result.prev;
+
             for (Map.Entry<String, Double> entry : distances.entrySet()) {
-                /* 终点名称 */
                 String target = entry.getKey();
-                /* 最短距离 */
                 double distance = entry.getValue();
-                // 存储: "from|to" -> distance
-                allPairsDistance.put(source + "|" + target, distance);
+                String key = source + "|" + target;
+                allPairsDistance.put(key, distance);
+
+                // 构建路径
+                if (distance < 999999.0 && !source.equals(target)) {
+                    allPairsPath.put(key, buildPath(source, target, prev));
+                }
             }
         }
+    }
+
+    /**
+     * 根据前驱节点表回溯构建路径
+     */
+    private List<String> buildPath(String source, String target, Map<String, String> prev) {
+        LinkedList<String> path = new LinkedList<>();
+        String current = target;
+        while (current != null) {
+            path.addFirst(current);
+            current = prev.get(current);
+        }
+        return path;
     }
     
     /**
@@ -164,65 +189,107 @@ public class DistanceService implements NodeVO.DistanceProvider {
     }
 
     /**
-     * Dijkstra算法：计算从起点到所有其他节点的最短距离
-     * 
-     * @param start 起点
-     * @return 到所有节点的最短距离Map
+     * 获取两点之间的最短路径（途径节点列表）
+     *
+     * @param from 起点
+     * @param to   终点
+     * @return 途径节点列表（包含起点和终点），不可达时返回空列表
      */
-    private Map<String, Double> dijkstraAll(String start) {
-        /* 存储到所有节点的最短距离 */
+    public List<String> getShortestPath(String from, String to) {
+        if (from == null || to == null || from.equals(to)) {
+            return Collections.emptyList();
+        }
+        String key = from + "|" + to;
+        return allPairsPath.getOrDefault(key, Collections.emptyList());
+    }
+
+    /**
+     * 获取两点之间的最短路径，包含每段距离
+     *
+     * @param from 起点
+     * @param to   终点
+     * @return 路径段列表，每段包含节点名和到下一节点的距离
+     */
+    public List<Map<String, Object>> getShortestPathWithDistance(String from, String to) {
+        List<String> path = getShortestPath(from, to);
+        if (path.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Map<String, Object>> segments = new ArrayList<>();
+        for (int i = 0; i < path.size(); i++) {
+            Map<String, Object> seg = new HashMap<>();
+            seg.put("node", path.get(i));
+            if (i < path.size() - 1) {
+                // 从邻接表获取相邻节点间的直接距离
+                Double dist = adjacencyMap.getOrDefault(path.get(i), Collections.emptyMap())
+                        .get(path.get(i + 1));
+                seg.put("distanceToNext", dist != null ? dist : 0.0);
+            }
+            segments.add(seg);
+        }
+        return segments;
+    }
+
+    /**
+     * Dijkstra算法：计算从起点到所有其他节点的最短距离和路径
+     *
+     * @param start 起点
+     * @return 包含距离和前驱节点的结果
+     */
+    private DijkstraResult dijkstraAll(String start) {
         Map<String, Double> distances = new HashMap<>();
-        /* 标记已访问的节点 */
+        Map<String, String> prev = new HashMap<>();
         Set<String> visited = new HashSet<>();
-        /* PriorityQueue是优先队列，根据元素中的distance字段排序 */
         PriorityQueue<NodeDistance> pq = new PriorityQueue<>(
                 Comparator.comparingDouble(NodeDistance::getDistance));
 
-        // 初始化
-        /* 所有节点的距离都设置为无穷大 */
         for (String node : allNodes) {
             distances.put(node, 999999.0);
         }
         distances.put(start, 0.0);
-        /* 放入起点到队列 */
         pq.offer(new NodeDistance(start, 0.0));
 
         while (!pq.isEmpty()) {
-            /* 取出距离最小的节点 */
-            /* 优先处理当前节点最近的节点 */
             NodeDistance current = pq.poll();
             String currentNode = current.node;
 
-            /* 如果这个节点已经确定了已经访问过了，就跳过它 */
             if (visited.contains(currentNode)) {
                 continue;
             }
-            /* 标记当前节点为已访问 */
             visited.add(currentNode);
 
-            /* 获取当前节点的所有邻居节点 */
             Map<String, Double> neighbors = adjacencyMap.get(currentNode);
-            /* 如果当前节点没有邻居节点，就跳过它 */
             if (neighbors == null) continue;
 
-            /* 遍历当前节点的所有邻居节点 */
             for (Map.Entry<String, Double> entry : neighbors.entrySet()) {
                 String neighbor = entry.getKey();
                 double edgeDistance = entry.getValue();
 
-                /* 如果邻居节点已经确定了已经访问过了，就跳过它 */
                 if (visited.contains(neighbor)) continue;
 
-                /* newDistance = 起点到 -> 当前节点 + 当前节点 -> 邻居节点的距离 */
                 double newDistance = distances.get(currentNode) + edgeDistance;
-                /* 如果新距离小于当前记录的距离，就更新距离 */
                 if (newDistance < distances.get(neighbor)) {
                     distances.put(neighbor, newDistance);
+                    prev.put(neighbor, currentNode);
                     pq.offer(new NodeDistance(neighbor, newDistance));
                 }
             }
         }
-        return distances;
+        return new DijkstraResult(distances, prev);
+    }
+
+    /**
+     * 内部类：Dijkstra算法结果
+     */
+    private static class DijkstraResult {
+        final Map<String, Double> distances;
+        final Map<String, String> prev;
+
+        DijkstraResult(Map<String, Double> distances, Map<String, String> prev) {
+            this.distances = distances;
+            this.prev = prev;
+        }
     }
 
     /**

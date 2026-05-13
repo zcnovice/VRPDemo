@@ -1,6 +1,7 @@
 package com.example.vrpdemo.controller;
 
 import com.example.vrpdemo.dto.*;
+import com.example.vrpdemo.service.DistanceService;
 import com.example.vrpdemo.service.VrpService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ import java.util.Map;
 public class VrpController {
 
     private final VrpService vrpService;
+    private final DistanceService distanceService;
 
     // ==================== 任务接口 ====================
 
@@ -147,6 +149,51 @@ public class VrpController {
         result.put("vehicleCount", vehicleCount);
         result.put("message", "成功初始化 " + vehicleCount + " 辆车");
         
+        return ResponseEntity.ok(result);
+    }
+
+    // ==================== 距离查询接口 ====================
+
+    /**
+     * 查询两地之间的最短道路距离
+     * 通过Dijkstra算法计算，支持多跳路径（如 A->B->C->D）
+     *
+     * @param startNode 起点地名
+     * @param endNode   终点地名
+     * @return 最短道路距离（公里）及路径信息
+     */
+    @GetMapping("/distance")
+    public ResponseEntity<Map<String, Object>> queryDistance(
+            @RequestParam String startNode,
+            @RequestParam String endNode) {
+
+        Map<String, Object> result = new HashMap<>();
+
+        if (!distanceService.nodeExists(startNode)) {
+            result.put("success", false);
+            result.put("message", "起点「" + startNode + "」不在道路网络中");
+            return ResponseEntity.ok(result);
+        }
+        if (!distanceService.nodeExists(endNode)) {
+            result.put("success", false);
+            result.put("message", "终点「" + endNode + "」不在道路网络中");
+            return ResponseEntity.ok(result);
+        }
+
+        if (!distanceService.isReachable(startNode, endNode)) {
+            result.put("success", false);
+            result.put("message", "从「" + startNode + "」到「" + endNode + "」不可达");
+            return ResponseEntity.ok(result);
+        }
+
+        double distance = distanceService.getDistance(startNode, endNode);
+        List<Map<String, Object>> path = distanceService.getShortestPathWithDistance(startNode, endNode);
+
+        result.put("success", true);
+        result.put("startNode", startNode);
+        result.put("endNode", endNode);
+        result.put("distanceKm", distance);
+        result.put("path", path);
         return ResponseEntity.ok(result);
     }
 
