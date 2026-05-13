@@ -14,8 +14,8 @@ public class GaodeConfig {
     /** 地理编码API */
     public static final String GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo";
 
-    /** 驾车路线规划API */
-    public static final String DRIVING_URL = "https://restapi.amap.com/v3/direction/driving";
+    /** 驾车路线规划API (V5版本) */
+    public static final String DRIVING_URL = "https://restapi.amap.com/v5/direction/driving";
 
     /** 达州市行政区划代码 */
     public static final String DAZHOU_AD_CODE = "511700";

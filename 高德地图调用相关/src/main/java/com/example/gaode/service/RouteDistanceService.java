@@ -152,7 +152,7 @@ public class RouteDistanceService {
     public double getDrivingDistance(double fromLng, double fromLat, double toLng, double toLat)
             throws IOException, InterruptedException {
 
-        String url = String.format("%s?key=%s&origin=%.6f,%.6f&destination=%.6f,%.6f&strategy=0",
+        String url = String.format("%s?key=%s&origin=%.6f,%.6f&destination=%.6f,%.6f&strategy=32",
                 GaodeConfig.DRIVING_URL,
                 GaodeConfig.API_KEY,
                 fromLng, fromLat,
