@@ -44,6 +44,7 @@ public class VrpServiceImpl implements VrpService {
 
     // ==================== 任务管理 ====================
 
+    /* 创建并执行VRP任务 */
     @Override
     @Transactional
     public Long createAndExecuteTask(TaskCreateRequest request) {
@@ -54,6 +55,7 @@ public class VrpServiceImpl implements VrpService {
         return taskId;
     }
 
+    /* 创建VRP计算任务（不立即执行） */
     @Override
     @Transactional
     public Long createTask(TaskCreateRequest request) {
@@ -70,6 +72,7 @@ public class VrpServiceImpl implements VrpService {
         return task.getId();
     }
 
+    /* 执行VRP计算任务 */
     @Override
     @Transactional
     public void executeTask(Long taskId) {

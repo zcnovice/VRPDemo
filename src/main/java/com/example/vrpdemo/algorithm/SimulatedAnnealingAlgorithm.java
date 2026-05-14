@@ -327,11 +327,10 @@ public class SimulatedAnnealingAlgorithm {
             NodeVO node = fromVehicle.getRoute().get(i);
             
             // 检查扇形区域（可放宽）
-            if (!relaxSector || !isNodeInSector(node, toVehicle.getId())) {
-                // 如果放宽限制，但节点不在扇形内，需要额外检查距离
-                if (!relaxSector && !isNodeInSector(node, toVehicle.getId())) {
-                    continue;
-                }
+            /* 检查：源车辆的节点是否在目标车辆的扩展区域内 */
+            /* relaxSector = false   and  并且源车辆节点不在目标车辆的区域内   就会跳过*/
+            if (!relaxSector && !isNodeInSector(node, toVehicle.getId())) {
+                continue; /* 不在目标车辆扩展区域内，跳过  但是这里放宽了限制（relaxSector = true）不在也可以 */
             }
             
             // 计算插入到目标车辆的最佳位置
@@ -596,7 +595,7 @@ public class SimulatedAnnealingAlgorithm {
     }
 
     /**
-     * 判断节点是否在指定车辆的扇形区域内
+     * 判断节点是否在指定车辆的扇形区域内(包含扩展区域)
      * 如果交换后的距离差异小于当前距离差异，则交换
      */
     private boolean isNodeInSector(NodeVO node, Long vehicleId) {
