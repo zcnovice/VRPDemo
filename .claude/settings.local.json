@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./mvnw compile *)"
+      "Bash(./mvnw compile *)",
+      "Bash(command -v tac)",
+      "Bash(command -v jq)",
+      "Bash(bash ~/.claude/statusline-command.sh)"
     ]
   }
 }

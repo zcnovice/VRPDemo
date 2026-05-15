@@ -44,12 +44,19 @@ public class VrpAlgorithmConfig {
      */
     private double weightCluster = 0.05;
 
-    /** 
-     * 负载均衡权重
+    /**
+     * 负载均衡权重（变异系数）
      * 目标：使各车辆的里程更加均衡
      * 推荐值：0.55
      */
-    private double weightBalance = 0.80;
+    private double weightBalance = 0.40;
+
+    /**
+     * 极差/平均权重
+     * 目标：(最大里程-最小里程)/平均里程，越小越好
+     * 推荐值：0.40
+     */
+    private double weightGapRatio = 0.40;
 
     // ==================== 扇形区域参数 ====================
 
@@ -66,7 +73,7 @@ public class VrpAlgorithmConfig {
     private double refTotalDistance = 4600.0;
 
     /** 聚类评分参考值 */
-    private double refCluster = 15.0;
+    private double refCluster = 2.0;
 
     /** 均衡评分参考值 */
     private double refBalance = 150.0;

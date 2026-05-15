@@ -24,8 +24,11 @@ public class SolutionVO {
     /** 聚类评分（衡量路线的紧凑程度，越小越好） */
     private double clusterScore;
 
-    /** 均衡评分（衡量各车辆负载均衡程度，越小越好） */
+    /** 均衡评分（变异系数，越小越好） */
     private double balanceScore;
+
+    /** 极差/平均评分（(最大-最小)/平均，越小越好） */
+    private double gapRatioScore;
 
     /** 综合得分（加权计算，越低越好） */
     private double score;
@@ -86,6 +89,17 @@ public class SolutionVO {
     }
 
     /**
+     * 仅计算各项指标（总里程、聚类、均衡、极差/平均），不计算最终评分
+     * 用于在设置参考值之前先获取初始解的指标值
+     */
+    public void calculateMetrics() {
+        calculateTotalDistance();
+        calculateClusterScore();
+        calculateBalanceScore();
+        calculateGapRatioScore();
+    }
+
+    /**
      * 计算综合评分（归一化版本）
      * 评分函数 = 加权(总里程/参考值 + 聚类评分/参考值 + 均衡评分/参考值)
      * 归一化使三个目标项在同一量级，权重才能真正反映其重要性
@@ -93,29 +107,36 @@ public class SolutionVO {
      * @param weightDistance 总里程权重
      * @param weightCluster 聚类权重
      * @param weightBalance 均衡权重
+     * @param weightGapRatio 极差/平均权重
      * @param refTotalDistance 总里程参考值
      * @param refCluster 聚类评分参考值
      * @param refBalance 均衡评分参考值
+     * @param refGapRatio 极差/平均参考值
      */
-    public void calculateScore(double weightDistance, double weightCluster, double weightBalance,
-                               double refTotalDistance, double refCluster, double refBalance) {
-        // 1. 计算总里程
+    public void calculateScore(double weightDistance, double weightCluster, double weightBalance, double weightGapRatio,
+                               double refTotalDistance, double refCluster, double refBalance, double refGapRatio) {
+        // 1. 计算总里程totalDistance
         calculateTotalDistance();
 
-        // 2. 计算聚类评分
+        // 2. 计算聚类评分clusterScore
         calculateClusterScore();
 
-        // 3. 计算均衡评分
+        // 3. 计算均衡评分balanceScore
         calculateBalanceScore();
 
-        // 4. 归一化加权求和（各项除以参考值，消除量级差异）
+        // 4. 计算极差/平均评分
+        calculateGapRatioScore();
+
+        // 5. 归一化加权求和（各项除以参考值，消除量级差异）
         double normDistance = refTotalDistance > 0 ? totalDistance / refTotalDistance : totalDistance;
         double normCluster = refCluster > 0 ? clusterScore / refCluster : clusterScore;
         double normBalance = refBalance > 0 ? balanceScore / refBalance : balanceScore;
+        double normGapRatio = refGapRatio > 0 ? gapRatioScore / refGapRatio : gapRatioScore;
 
         this.score = weightDistance * normDistance
                    + weightCluster * normCluster
-                   + weightBalance * normBalance;
+                   + weightBalance * normBalance
+                   + weightGapRatio * normGapRatio;
     }
 
     /**
@@ -207,11 +228,42 @@ public class SolutionVO {
         // 最大最小差距比 = (最大-最小) / 平均
         double gapRatio = (maxDist - minDist) / avg;
 
-        // 差距超过10%的部分施加惩罚，惩罚系数5.0
-        double penalty = 5.0 * Math.max(0, gapRatio - 0.10);
+        // 差距超过10%的部分施加惩罚，惩罚系数2.0，上限0.8防止评分悬崖
+        double penalty = 2.0 * Math.min(Math.max(0, gapRatio - 0.10), 0.8);
 
         // 乘以平均里程，使均衡评分与总里程在同一数量级
         this.balanceScore = (cv + penalty) * avg;
+    }
+
+    /**
+     * 计算极差/平均评分
+     * 方法：(最大里程 - 最小里程) / 平均里程
+     * 评分越小表示各车辆里程越均衡
+     */
+    private void calculateGapRatioScore() {
+        if (vehicleMap.isEmpty()) {
+            this.gapRatioScore = 0;
+            return;
+        }
+
+        double sum = 0;
+        double minDist = Double.MAX_VALUE;
+        double maxDist = Double.MIN_VALUE;
+        for (VehicleVO vehicle : vehicleMap.values()) {
+            double dist = vehicle.calculateDistance(depot);
+            sum += dist;
+            minDist = Math.min(minDist, dist);
+            maxDist = Math.max(maxDist, dist);
+        }
+
+        double avg = sum / vehicleMap.size();
+        if (avg == 0) {
+            this.gapRatioScore = 0;
+            return;
+        }
+
+        // 极差/平均 = (最大-最小) / 平均
+        this.gapRatioScore = (maxDist - minDist) / avg;
     }
 
     /**
@@ -225,6 +277,7 @@ public class SolutionVO {
         copy.totalDistance = this.totalDistance;
         copy.clusterScore = this.clusterScore;
         copy.balanceScore = this.balanceScore;
+        copy.gapRatioScore = this.gapRatioScore;
         copy.score = this.score;
 
         for (VehicleVO vehicle : this.vehicleMap.values()) {

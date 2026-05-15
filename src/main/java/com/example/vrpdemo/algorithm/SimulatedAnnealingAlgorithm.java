@@ -46,6 +46,7 @@ public class SimulatedAnnealingAlgorithm {
     private double refTotalDistance;
     private double refCluster;
     private double refBalance;
+    private double refGapRatio;
 
     public SimulatedAnnealingAlgorithm(VrpAlgorithmConfig config) {
         this.config = config;
@@ -74,19 +75,38 @@ public class SimulatedAnnealingAlgorithm {
 
         // 1. 创建初始解
         SolutionVO currentSolution = createInitialSolution(vehicles, nodes);
-        /* 这个时候每个车都有了对应的节点，并且已经计算了一个初始得分 */
 
-        // 从初始解提取自适应参考值（用于评分归一化）
-        this.refTotalDistance = Math.max(currentSolution.getTotalDistance(), 1.0);
-        this.refCluster = Math.max(currentSolution.getClusterScore(), 1.0);
-        this.refBalance = Math.max(currentSolution.getBalanceScore(), 1.0);
-        log.info("自适应参考值: 总里程={}, 聚类={}, 均衡={}",
+        // 2. 先计算初始解的各项指标（总里程、聚类、均衡、极差/平均），用于设置参考值
+        currentSolution.calculateMetrics();
+
+        // 使用配置中的固定参考值（用于评分归一化）
+        this.refTotalDistance = config.getRefTotalDistance();
+        this.refCluster = config.getRefCluster();
+        // balanceScore = (cv + penalty) * avg，范围太广，用avg作为基准
+        double avgDistance = currentSolution.getTotalDistance() / vehicles.size();
+        this.refBalance = avgDistance;  // 归一化后cv+penalty的量级就是得分
+        // gapRatioScore = (max-min)/avg，本身已经是归一化指标，参考值设为1.0
+        this.refGapRatio = 0.2;
+        log.info("参考值: 总里程={}, 聚类={}, 均衡(avg)={}, 极差/平均={}",
                 String.format("%.0f", refTotalDistance),
                 String.format("%.1f", refCluster),
-                String.format("%.1f", refBalance));
+                String.format("%.0f", refBalance),
+                String.format("%.2f", refGapRatio));
 
-        /* 初始解赋值给最优解 */
-        SolutionVO bestSolution = currentSolution;
+        // 用正确的 ref 重算初始解得分（createInitialSolution 内 ref=0，导致得分未归一化）
+        currentSolution.calculateScore(
+                config.getWeightDistance(),
+                config.getWeightCluster(),
+                config.getWeightBalance(),
+                config.getWeightGapRatio(),
+                refTotalDistance,
+                refCluster,
+                refBalance,
+                refGapRatio
+        );
+
+        /* 初始解深拷贝给最优解，防止后续迭代引用同一对象 */
+        SolutionVO bestSolution = currentSolution.deepCopy();
         log.info("初始解得分: {}", String.format("%.4f", bestSolution.getScore()));
 
         // 2. 模拟退火主循环
@@ -213,15 +233,7 @@ public class SimulatedAnnealingAlgorithm {
         // 5. 负载均衡优化：过载车辆向相邻车辆溢出节点
         balanceLoad(solution, vehicles);
 
-        // 6. 计算初始解评分
-        solution.calculateScore(
-                config.getWeightDistance(),
-                config.getWeightCluster(),
-                config.getWeightBalance(),
-                refTotalDistance,
-                refCluster,
-                refBalance
-        );
+        // 评分计算移到solve()中，在设置参考值之后执行
 
         return solution;
     }
@@ -239,7 +251,7 @@ public class SimulatedAnnealingAlgorithm {
         log.info("负载均衡开始（按里程均衡）");
 
         // 多轮迭代，从高里程车移节点到低里程车
-        for (int round = 0; round < 200; round++) {
+        for (int round = 0; round < 20; round++) {
             // 计算所有车辆里程，找最大最小
             double maxDist = 0, minDist = Double.MAX_VALUE;
             Long maxVId = null, minVId = null;
@@ -255,9 +267,9 @@ public class SimulatedAnnealingAlgorithm {
             double avgDist = sumDist / numVehicles;
             double gapRatio = avgDist > 0 ? (maxDist - minDist) / avgDist : 0;
 
-            // 差距在15%以内或无法继续时停止
-            if (gapRatio <= 0.15) {
-                log.info("负载均衡完成: 差距比={}% (目标15%)", String.format("%.1f", gapRatio * 100));
+            // 差距在40%以内或无法继续时停止（留给SA主循环优化）
+            if (gapRatio <= 0.40) {
+                log.info("负载均衡完成: 差距比={}% (目标40%)", String.format("%.1f", gapRatio * 100));
                 break;
             }
 
@@ -457,9 +469,11 @@ public class SimulatedAnnealingAlgorithm {
                 config.getWeightDistance(),
                 config.getWeightCluster(),
                 config.getWeightBalance(),
+                config.getWeightGapRatio(),
                 refTotalDistance,
                 refCluster,
-                refBalance
+                refBalance,
+                refGapRatio
         );
 
         return newSolution;
@@ -786,9 +800,11 @@ public class SimulatedAnnealingAlgorithm {
                 config.getWeightDistance(),
                 config.getWeightCluster(),
                 config.getWeightBalance(),
+                config.getWeightGapRatio(),
                 refTotalDistance,
                 refCluster,
-                refBalance
+                refBalance,
+                refGapRatio
         );
 
         // 打印最终各车里程
@@ -959,9 +975,11 @@ public class SimulatedAnnealingAlgorithm {
                 config.getWeightDistance(),
                 config.getWeightCluster(),
                 config.getWeightBalance(),
+                config.getWeightGapRatio(),
                 refTotalDistance,
                 refCluster,
-                refBalance
+                refBalance,
+                refGapRatio
         );
 
         // 打印最终结果
@@ -1049,17 +1067,19 @@ public class SimulatedAnnealingAlgorithm {
                 if (changed) break;
             }
         }
-        
+
         // 重新计算评分
         solution.calculateScore(
                 config.getWeightDistance(),
                 config.getWeightCluster(),
                 config.getWeightBalance(),
+                config.getWeightGapRatio(),
                 refTotalDistance,
                 refCluster,
-                refBalance
+                refBalance,
+                refGapRatio
         );
-        
+
         log.info("顺路捎带完成，共转移 {} 个节点", pickupCount);
     }
     
