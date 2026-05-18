@@ -33,6 +33,9 @@ public class TaskResultResponse {
     /** 总里程 */
     private Double totalDistance;
 
+    /** 差距比 (最大里程-最小里程)/平均里程 */
+    private Double gapRatio;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

@@ -794,6 +794,10 @@ public class SimulatedAnnealingAlgorithm {
                 insertAtBestPosition(targetVehicle, movedNode);
                 moveCount++;
 
+                // 移动后对被修改的两辆车执行2-opt，修复路线顺序
+                performTwoOptOnVehicle(maxVehicle);
+                performTwoOptOnVehicle(targetVehicle);
+
                 if (iter % 20 == 0) {
                     log.info("专项均衡优化第{}轮: 移动节点[{}] V{}->V{}, 全局差距={}km, 总里程={}km",
                             iter, movedNode.getName(), maxVId, bestTargetVId,
@@ -810,6 +814,9 @@ public class SimulatedAnnealingAlgorithm {
                     break;
                 }
                 moveCount++;
+                // 交换后对被修改的两辆车执行2-opt
+                performTwoOptOnVehicle(maxVehicle);
+                performTwoOptOnVehicle(minVehicle);
             }
         }
 
@@ -1182,12 +1189,7 @@ public class SimulatedAnnealingAlgorithm {
     // ==================== 2-opt路线内优化 ====================
 
     /**
-     * 2-opt路线内优化
-     * 对每辆车的路线执行2-opt，通过反转路径段来缩短总里程
-     * 不改变节点归属（哪个节点属于哪辆车），因此不影响均衡/聚类/极差比
-     *
-     * @param solution 解决方案
-     * @param vehicleIds 车辆ID列表
+     * 对所有车辆执行2-opt路线内优化
      */
     private void performTwoOptOptimization(SolutionVO solution, List<Long> vehicleIds) {
         log.info("========== 执行2-opt路线内优化 ==========");
@@ -1195,60 +1197,8 @@ public class SimulatedAnnealingAlgorithm {
 
         for (Long vid : vehicleIds) {
             VehicleVO vehicle = solution.getVehicle(vid);
-            List<NodeVO> route = vehicle.getRoute();
-            int n = route.size();
-            if (n < 2) continue;
-
-            boolean improved = true;
-            int improvements = 0;
-
-            // 反复执行直到没有改善
-            while (improved) {
-                improved = false;
-                for (int i = 0; i < n - 1; i++) {
-                    for (int j = i + 1; j < n; j++) {
-                        // 计算反转 route[i..j] 前后的距离变化
-                        // 路线: depot -> route[0] -> ... -> route[i-1] -> route[i] -> ... -> route[j] -> route[j+1] -> ... -> depot
-                        // 反转后: depot -> route[0] -> ... -> route[i-1] -> route[j] -> ... -> route[i] -> route[j+1] -> ... -> depot
-                        // 被替换的两条边: (route[i-1], route[i]) 和 (route[j], route[j+1])
-                        // 新的两条边: (route[i-1], route[j]) 和 (route[i], route[j+1])
-
-                        double oldEdge1, oldEdge2, newEdge1, newEdge2;
-
-                        // 边1: 前节点 -> route[i]
-                        if (i == 0) {
-                            oldEdge1 = depot.distanceTo(route.get(0));
-                            newEdge1 = depot.distanceTo(route.get(j));
-                        } else {
-                            oldEdge1 = route.get(i - 1).distanceTo(route.get(i));
-                            newEdge1 = route.get(i - 1).distanceTo(route.get(j));
-                        }
-
-                        // 边2: route[j] -> 后节点
-                        if (j == n - 1) {
-                            oldEdge2 = route.get(n - 1).distanceTo(depot);
-                            newEdge2 = route.get(i).distanceTo(depot);
-                        } else {
-                            oldEdge2 = route.get(j).distanceTo(route.get(j + 1));
-                            newEdge2 = route.get(i).distanceTo(route.get(j + 1));
-                        }
-
-                        double delta = (newEdge1 + newEdge2) - (oldEdge1 + oldEdge2);
-                        if (delta < -0.001) {  // 有改善（加小阈值避免浮点误差）
-                            // 反转 route[i..j]
-                            Collections.reverse(route.subList(i, j + 1));
-                            improved = true;
-                            improvements++;
-                        }
-                    }
-                }
-            }
-
+            int improvements = performTwoOptOnVehicle(vehicle);
             totalImprovements += improvements;
-            if (improvements > 0) {
-                log.info("2-opt: V{} 反转{}次, 里程={}km", vid, improvements,
-                        String.format("%.0f", vehicle.calculateDistance(depot)));
-            }
         }
 
         // 重新计算评分
@@ -1264,6 +1214,63 @@ public class SimulatedAnnealingAlgorithm {
         );
 
         log.info("2-opt优化完成，共反转{}次", totalImprovements);
+    }
+
+    /**
+     * 对单辆车执行2-opt路线内优化
+     * 通过反转路径段来缩短该车的行驶里程，不改变节点归属
+     *
+     * @param vehicle 目标车辆
+     * @return 反转次数
+     */
+    private int performTwoOptOnVehicle(VehicleVO vehicle) {
+        List<NodeVO> route = vehicle.getRoute();
+        int n = route.size();
+        if (n < 2) return 0;
+
+        boolean improved = true;
+        int improvements = 0;
+        int maxPasses = 10;  // 最多执行10轮完整扫描，防止震荡
+        int passCount = 0;
+
+        while (improved && passCount < maxPasses) {
+            improved = false;
+            passCount++;
+            for (int i = 0; i < n - 1; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    double oldEdge1, oldEdge2, newEdge1, newEdge2;
+
+                    if (i == 0) {
+                        oldEdge1 = depot.distanceTo(route.get(0));
+                        newEdge1 = depot.distanceTo(route.get(j));
+                    } else {
+                        oldEdge1 = route.get(i - 1).distanceTo(route.get(i));
+                        newEdge1 = route.get(i - 1).distanceTo(route.get(j));
+                    }
+
+                    if (j == n - 1) {
+                        oldEdge2 = route.get(n - 1).distanceTo(depot);
+                        newEdge2 = route.get(i).distanceTo(depot);
+                    } else {
+                        oldEdge2 = route.get(j).distanceTo(route.get(j + 1));
+                        newEdge2 = route.get(i).distanceTo(route.get(j + 1));
+                    }
+
+                    double delta = (newEdge1 + newEdge2) - (oldEdge1 + oldEdge2);
+                    if (delta < -0.001) {
+                        Collections.reverse(route.subList(i, j + 1));
+                        improved = true;
+                        improvements++;
+                    }
+                }
+            }
+        }
+
+        if (improvements > 0) {
+            log.info("2-opt: V{} 反转{}次, 里程={}km", vehicle.getId(), improvements,
+                    String.format("%.0f", vehicle.calculateDistance(depot)));
+        }
+        return improvements;
     }
     
     /**

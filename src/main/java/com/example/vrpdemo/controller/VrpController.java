@@ -226,6 +226,7 @@ public class VrpController {
                 Map<String, Object> detail = new java.util.HashMap<>();
                 detail.put("taskId", taskId);
                 detail.put("distance", result.getTotalDistance());
+                detail.put("gapRatio", result.getGapRatio());
                 details.add(detail);
             }
         }

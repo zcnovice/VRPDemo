@@ -145,10 +145,27 @@ public class VrpServiceImpl implements VrpService {
 
         TaskResultResponse response = convertToResponse(task);
 
-        // 如果任务完成，加载路线详情
+        // 如果任务完成，加载路线详情并计算差距比
         if (task.getStatus() == 2) {
             List<VrpRouteDetail> details = routeDetailMapper.selectByTaskId(taskId);
-            response.setRoutes(buildRouteDetails(details));
+            List<VehicleRouteDTO> routes = buildRouteDetails(details);
+            response.setRoutes(routes);
+
+            // 计算差距比
+            if (routes != null && !routes.isEmpty()) {
+                double minDist = Double.MAX_VALUE;
+                double maxDist = 0;
+                double sumDist = 0;
+                for (VehicleRouteDTO route : routes) {
+                    double dist = route.getTotalDistance() != null ? route.getTotalDistance() : 0;
+                    minDist = Math.min(minDist, dist);
+                    maxDist = Math.max(maxDist, dist);
+                    sumDist += dist;
+                }
+                double avgDist = sumDist / routes.size();
+                double gapRatio = avgDist > 0 ? (maxDist - minDist) / avgDist : 0;
+                response.setGapRatio(Math.round(gapRatio * 10000.0) / 100.0); // 保留两位小数的百分比
+            }
         }
 
         return response;
