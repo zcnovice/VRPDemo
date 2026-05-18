@@ -35,7 +35,7 @@ public class VrpAlgorithmConfig {
      * 目标：最小化总行驶距离
      * 推荐值：0.35
      */
-    private double weightDistance = 0.15;
+    private double weightDistance = 0.45;
 
     /** 
      * 区域聚类权重
@@ -49,14 +49,14 @@ public class VrpAlgorithmConfig {
      * 目标：使各车辆的里程更加均衡
      * 推荐值：0.55
      */
-    private double weightBalance = 0.40;
+    private double weightBalance = 0.20;
 
     /**
      * 极差/平均权重
      * 目标：(最大里程-最小里程)/平均里程，越小越好
      * 推荐值：0.40
      */
-    private double weightGapRatio = 0.40;
+    private double weightGapRatio = 0.30;
 
     // ==================== 日志参数 ====================
 
