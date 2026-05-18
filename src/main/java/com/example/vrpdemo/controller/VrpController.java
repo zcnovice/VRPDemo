@@ -227,6 +227,7 @@ public class VrpController {
                 detail.put("taskId", taskId);
                 detail.put("distance", result.getTotalDistance());
                 detail.put("gapRatio", result.getGapRatio());
+                detail.put("nodeGapRatio", result.getNodeGapRatio());
                 details.add(detail);
             }
         }

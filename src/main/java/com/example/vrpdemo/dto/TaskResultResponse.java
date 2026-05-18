@@ -33,8 +33,11 @@ public class TaskResultResponse {
     /** 总里程 */
     private Double totalDistance;
 
-    /** 差距比 (最大里程-最小里程)/平均里程 */
+    /** 里程差距比 (最大里程-最小里程)/平均里程 */
     private Double gapRatio;
+
+    /** 节点数差距比 (最大节点数-最小节点数)/平均节点数 */
+    private Double nodeGapRatio;
 
     /** 创建时间 */
     private LocalDateTime createTime;
