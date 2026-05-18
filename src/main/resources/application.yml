@@ -51,7 +51,7 @@ vrp:
     # 退火参数
     initial-temperature: 10000.0           # 初始温度（配合归一化得分量级 ~1.0）
     final-temperature: 0.001          # 终止温度
-    cooling-rate: 0.95             # 降温系数（越接近1迭代越多）
+    cooling-rate: 0.99             # 降温系数（越接近1迭代越多）
     
     # 权重参数
     weight-distance: 0.35             # 总里程权重

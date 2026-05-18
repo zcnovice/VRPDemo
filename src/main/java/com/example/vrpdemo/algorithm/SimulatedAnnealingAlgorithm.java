@@ -115,7 +115,7 @@ public class SimulatedAnnealingAlgorithm {
         int iteration = 0;
         /* 停滞计数器：连续未改善最优解的迭代次数 */
         int stagnationCount = 0;
-        final int STAGNATION_LIMIT = 50;  // 连续50次未改善则回退到最优解
+        final int STAGNATION_LIMIT = 200;  // 连续50次未改善则回退到最优解
 
         while (temperature > config.getFinalTemperature()) {
             iteration++;
@@ -146,7 +146,7 @@ public class SimulatedAnnealingAlgorithm {
             // 停滞回退：连续未改善最优解时，回退到最优解并小幅升温
             if (stagnationCount >= STAGNATION_LIMIT) {
                 currentSolution = bestSolution.deepCopy();
-                temperature = Math.max(temperature * 1.5, 0.01);  // 小幅升温，给算法重新探索的活力
+                temperature = Math.min(config.getInitialTemperature(), Math.max(temperature * 1.13, 0.00001));  // 小幅升温，上限为初始温度
                 stagnationCount = 0;
                 log.info("停滞{}次，回退到最优解并升温至 {}", STAGNATION_LIMIT,
                         String.format("%.4f", temperature));

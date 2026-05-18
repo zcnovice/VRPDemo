@@ -64,7 +64,7 @@ public class VrpAlgorithmConfig {
      * 日志打印频率（每N次迭代打印一次）
      * 推荐值：1000
      */
-    private int logInterval = 1;
+    private int logInterval = 100;
 
     // ==================== 扇形区域参数 ====================
 
