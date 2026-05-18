@@ -177,7 +177,11 @@ public class SimulatedAnnealingAlgorithm {
         performDetourPickup(bestSolution, vehicleIds);
         log.info("顺路捎带后总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
 
-        // 5. 专项均衡优化：缩小最大最小里程差距（最后执行，保证成果不被覆盖）    缩小里程差距，但是会增加总里程，还需要优化
+        // 5. 2-opt路线内优化：重排每辆车的节点顺序，缩短路径（不影响均衡/聚类）
+        performTwoOptOptimization(bestSolution, vehicleIds);
+        log.info("2-opt优化后总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
+
+        // 6. 专项均衡优化：缩小最大最小里程差距（最后执行，保证成果不被覆盖）
         performBalanceRefinement(bestSolution, vehicleIds);
 
         // 6. 兜底微调：如果最低里程车仍偏低，从最高车移节点给它
@@ -1173,6 +1177,93 @@ public class SimulatedAnnealingAlgorithm {
     private boolean isNodeNearSector(NodeVO node, Long vehicleId) {
         // 顺路捎带时几乎不限制区域，只检查距离
         return true;
+    }
+
+    // ==================== 2-opt路线内优化 ====================
+
+    /**
+     * 2-opt路线内优化
+     * 对每辆车的路线执行2-opt，通过反转路径段来缩短总里程
+     * 不改变节点归属（哪个节点属于哪辆车），因此不影响均衡/聚类/极差比
+     *
+     * @param solution 解决方案
+     * @param vehicleIds 车辆ID列表
+     */
+    private void performTwoOptOptimization(SolutionVO solution, List<Long> vehicleIds) {
+        log.info("========== 执行2-opt路线内优化 ==========");
+        int totalImprovements = 0;
+
+        for (Long vid : vehicleIds) {
+            VehicleVO vehicle = solution.getVehicle(vid);
+            List<NodeVO> route = vehicle.getRoute();
+            int n = route.size();
+            if (n < 2) continue;
+
+            boolean improved = true;
+            int improvements = 0;
+
+            // 反复执行直到没有改善
+            while (improved) {
+                improved = false;
+                for (int i = 0; i < n - 1; i++) {
+                    for (int j = i + 1; j < n; j++) {
+                        // 计算反转 route[i..j] 前后的距离变化
+                        // 路线: depot -> route[0] -> ... -> route[i-1] -> route[i] -> ... -> route[j] -> route[j+1] -> ... -> depot
+                        // 反转后: depot -> route[0] -> ... -> route[i-1] -> route[j] -> ... -> route[i] -> route[j+1] -> ... -> depot
+                        // 被替换的两条边: (route[i-1], route[i]) 和 (route[j], route[j+1])
+                        // 新的两条边: (route[i-1], route[j]) 和 (route[i], route[j+1])
+
+                        double oldEdge1, oldEdge2, newEdge1, newEdge2;
+
+                        // 边1: 前节点 -> route[i]
+                        if (i == 0) {
+                            oldEdge1 = depot.distanceTo(route.get(0));
+                            newEdge1 = depot.distanceTo(route.get(j));
+                        } else {
+                            oldEdge1 = route.get(i - 1).distanceTo(route.get(i));
+                            newEdge1 = route.get(i - 1).distanceTo(route.get(j));
+                        }
+
+                        // 边2: route[j] -> 后节点
+                        if (j == n - 1) {
+                            oldEdge2 = route.get(n - 1).distanceTo(depot);
+                            newEdge2 = route.get(i).distanceTo(depot);
+                        } else {
+                            oldEdge2 = route.get(j).distanceTo(route.get(j + 1));
+                            newEdge2 = route.get(i).distanceTo(route.get(j + 1));
+                        }
+
+                        double delta = (newEdge1 + newEdge2) - (oldEdge1 + oldEdge2);
+                        if (delta < -0.001) {  // 有改善（加小阈值避免浮点误差）
+                            // 反转 route[i..j]
+                            Collections.reverse(route.subList(i, j + 1));
+                            improved = true;
+                            improvements++;
+                        }
+                    }
+                }
+            }
+
+            totalImprovements += improvements;
+            if (improvements > 0) {
+                log.info("2-opt: V{} 反转{}次, 里程={}km", vid, improvements,
+                        String.format("%.0f", vehicle.calculateDistance(depot)));
+            }
+        }
+
+        // 重新计算评分
+        solution.calculateScore(
+                config.getWeightDistance(),
+                config.getWeightCluster(),
+                config.getWeightBalance(),
+                config.getWeightGapRatio(),
+                refTotalDistance,
+                refCluster,
+                refBalance,
+                refGapRatio
+        );
+
+        log.info("2-opt优化完成，共反转{}次", totalImprovements);
     }
     
     /**
