@@ -58,6 +58,14 @@ public class VrpAlgorithmConfig {
      */
     private double weightGapRatio = 0.40;
 
+    // ==================== 日志参数 ====================
+
+    /**
+     * 日志打印频率（每N次迭代打印一次）
+     * 推荐值：1000
+     */
+    private int logInterval = 1;
+
     // ==================== 扇形区域参数 ====================
 
     /** 

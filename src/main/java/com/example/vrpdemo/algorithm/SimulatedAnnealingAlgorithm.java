@@ -142,7 +142,7 @@ public class SimulatedAnnealingAlgorithm {
             temperature *= config.getCoolingRate();
 
             // 日志输出
-            if (iteration % 1000 == 0) {
+            if (iteration % config.getLogInterval() == 0) {
                 log.info("迭代: {}, 温度: {}, 当前得分: {}, 最优得分: {}",
                         iteration,
                         String.format("%.4f", temperature),
@@ -163,11 +163,11 @@ public class SimulatedAnnealingAlgorithm {
         performDetourPickup(bestSolution, vehicleIds);
         log.info("顺路捎带后总里程: {}", String.format("%.2f", bestSolution.getTotalDistance()));
 
-        // 5. 专项均衡优化：缩小最大最小里程差距（最后执行，保证成果不被覆盖）
+        // 5. 专项均衡优化：缩小最大最小里程差距（最后执行，保证成果不被覆盖）    缩小里程差距，但是会增加总里程，还需要优化
         performBalanceRefinement(bestSolution, vehicleIds);
 
         // 6. 兜底微调：如果最低里程车仍偏低，从最高车移节点给它
-        performGapClosing(bestSolution, vehicleIds);
+        //performGapClosing(bestSolution, vehicleIds);
 
         return bestSolution;
     }
