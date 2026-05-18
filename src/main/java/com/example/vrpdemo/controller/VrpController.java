@@ -197,6 +197,75 @@ public class VrpController {
         return ResponseEntity.ok(result);
     }
 
+    // ==================== 批量测试接口 ====================
+
+    /**
+     * 批量测试接口：多次执行同一任务，统计里程分布
+     * 用于验证算法稳定性（多次运行看平均里程和波动）
+     *
+     * @param request     任务请求（taskName, vehicleCount）
+     * @param repeatCount 重复执行次数
+     * @return 统计结果（平均/最小/最大/每次详情）
+     */
+    @PostMapping("/batch-test")
+    public ResponseEntity<Map<String, Object>> batchTest(
+            @Valid @RequestBody TaskCreateRequest request,
+            @RequestParam(defaultValue = "20") int repeatCount) {
+
+        Map<String, Object> response = new HashMap<>();
+        List<Double> distances = new java.util.ArrayList<>();
+        List<Map<String, Object>> details = new java.util.ArrayList<>();
+
+        long totalStart = System.currentTimeMillis();
+
+        for (int i = 0; i < repeatCount; i++) {
+            Long taskId = vrpService.createAndExecuteTask(request);
+            TaskResultResponse result = vrpService.getTaskResult(taskId);
+            if (result != null && result.getTotalDistance() != null) {
+                distances.add(result.getTotalDistance());
+                Map<String, Object> detail = new java.util.HashMap<>();
+                detail.put("taskId", taskId);
+                detail.put("distance", result.getTotalDistance());
+                details.add(detail);
+            }
+        }
+
+        long totalElapsed = System.currentTimeMillis() - totalStart;
+
+        // 统计
+        double sum = 0, min = Double.MAX_VALUE, max = 0;
+        int bestIdx = 0, worstIdx = 0;
+        for (int i = 0; i < distances.size(); i++) {
+            double d = distances.get(i);
+            sum += d;
+            if (d < min) { min = d; bestIdx = i; }
+            if (d > max) { max = d; worstIdx = i; }
+        }
+        double avg = distances.isEmpty() ? 0 : sum / distances.size();
+
+        // 极差（最大-最小）和标准差
+        double variance = 0;
+        for (double d : distances) {
+            variance += (d - avg) * (d - avg);
+        }
+        double stdDev = distances.size() > 1 ? Math.sqrt(variance / (distances.size() - 1)) : 0;
+
+        response.put("success", true);
+        response.put("repeatCount", distances.size());
+        response.put("avgDistance", Math.round(avg * 100.0) / 100.0);
+        response.put("minDistance", Math.round(min * 100.0) / 100.0);
+        response.put("maxDistance", Math.round(max * 100.0) / 100.0);
+        response.put("range", Math.round((max - min) * 100.0) / 100.0);
+        response.put("stdDev", Math.round(stdDev * 100.0) / 100.0);
+        response.put("bestTaskId", details.isEmpty() ? null : ((Map<String, Object>) details.get(bestIdx)).get("taskId"));
+        response.put("worstTaskId", details.isEmpty() ? null : ((Map<String, Object>) details.get(worstIdx)).get("taskId"));
+        response.put("totalTimeSeconds", Math.round(totalElapsed / 1000.0 * 100.0) / 100.0);
+        response.put("avgTimeSeconds", Math.round(totalElapsed / Math.max(distances.size(), 1) / 1000.0 * 100.0) / 100.0);
+        response.put("details", details);
+
+        return ResponseEntity.ok(response);
+    }
+
     // ==================== 快速测试接口 ====================
 
     /**
